@@ -1,0 +1,22 @@
+{
+  "name": "iboss-api-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native TypeScript SDK for the iboss Zero Trust SSE platform — client library, workflow framework, CLI, and optional web UI.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.14"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/ui"
+  ],
+  "scripts": {
+    "test": "npm run check:secrets && npm run test -w @iboss/sdk",
+    "typecheck": "npm run typecheck -w @iboss/sdk && npm run typecheck -w @iboss/ui",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "cli": "node packages/sdk/bin/iboss.mjs",
+    "ui": "npm run dev -w @iboss/ui",
+    "ui:start": "npm run start -w @iboss/ui"
+  }
+}

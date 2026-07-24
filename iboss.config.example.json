@@ -1,0 +1,18 @@
+{
+  "$comment": "Copy to iboss.config.json (gitignored) for project-local profiles, or put the same shape in ~/.iboss/config.json for user-global profiles. An iboss API key belongs to exactly one account; a profile that spans several accounts lists one credential per account.",
+  "defaultProfile": "prod",
+  "profiles": {
+    "prod": {
+      "domain": "api.ibosscloud.com",
+      "apiKey": "your-api-key-here"
+    },
+    "fleet": {
+      "domain": "api.ibosscloud.com",
+      "accounts": [
+        { "name": "hq", "apiKey": "your-hq-api-key-here" },
+        { "name": "emea", "apiKey": "your-emea-api-key-here" },
+        { "name": "lab", "apiKey": "your-lab-api-key-here", "domain": "api.example.invalid" }
+      ]
+    }
+  }
+}

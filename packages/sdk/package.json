@@ -1,0 +1,32 @@
+{
+  "name": "@iboss/sdk",
+  "version": "0.1.0",
+  "description": "iboss Zero Trust SSE API client, workflow framework, and CLI.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "iboss": "./bin/iboss.mjs"
+  },
+  "engines": {
+    "node": ">=18.14"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
