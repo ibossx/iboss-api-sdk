@@ -427,6 +427,8 @@ message strings:
 | `IbossSubscriptionError` | 422 | account lacks the module (DLP, ZTNA, etc.); check `account.subscriptionFlags` |
 | `IbossHostUnavailableError` | n/a | the account has no node of that type (e.g. no reporting cluster) |
 | `IbossNetworkError` | n/a | transport failure after retries |
+| `IbossPolicyTypeError` | n/a | allowlist/blocklist cannot carry typed destinations (silent bitmap drop) |
+| `IbossVerifyError` | n/a | settings POST succeeded but GET did not persist intended fields |
 
 Retries are automatic (exponential backoff with jitter; POST retries
 transport errors only). Set `IBOSS_DEBUG=1` for request-level logging with

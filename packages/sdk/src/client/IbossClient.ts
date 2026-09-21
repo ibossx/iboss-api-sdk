@@ -154,4 +154,9 @@ export class IbossClient {
     await this.connect();
     return this.layer;
   }
+
+  /** @internal Agent helpers use this for non-fatal policy conflicts. */
+  warn(message: string, data?: unknown): void {
+    this.logger.warn(message, data);
+  }
 }

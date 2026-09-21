@@ -20,7 +20,17 @@
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
  * (createLayer adds it when isZeroTrustResourcePolicy: 1).
  */
+import { IbossVerifyError } from "../client/errors.js";
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
+import {
+  aiServicesDestination,
+  collectDestinationVerifyFailures,
+  decodeDestinations,
+  prepareDestinationWrite,
+  type DestinationSpec,
+  type ResourcePolicyDestinations,
+  type WrongTypeBehavior,
+} from "./destinations.js";
 
 export type PolicyLayerType = "blocklist" | "allowlist" | "categories";
 
@@ -325,5 +335,119 @@ export class PoliciesApi extends SubClient {
         resourceIds: params.resourceIds,
       },
     });
+  }
+
+  /**
+   * Read destinations as a typed list (DEVELOP-34925). Agents never see the
+   * 400-char `categories` bitmap or inverted `categoriesSelectedType`.
+   *
+   * Purpose-named equivalent of `GET …/resourcePolicies/{id}/destinations`.
+   * Wire today is `GET /json/controls/policyLayers/settings`.
+   */
+  async getResourcePolicyDestinations(
+    customCategoryId: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<ResourcePolicyDestinations> {
+    const settings = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    return decodeDestinations(settings);
+  }
+
+  /**
+   * Purpose-named typed destinations write (DEVELOP-34925):
+   *
+   * ```
+   * PUT …/resourcePolicies/{id}/destinations
+   * { mode: "selectedWebCategories", categories: ["AI_SERVICES"] }
+   * ```
+   *
+   * Encodes AI Services as **bit 110** + `categoriesSelectedType: 0`
+   * (UI “Selected Destinations”). Agents never invent the bitmap or the
+   * inverted enum. Legacy wire fields remain on the settings POST for old
+   * clients.
+   *
+   * Allowlist/blocklist + categories **rejects** by default
+   * (`IbossPolicyTypeError`) — the platform silently drops the bitmap
+   * (`GET categories` length 0). Pass `onWrongType: "warn"` to skip the
+   * write and leave the layer unchanged.
+   *
+   * Implementation (no Gateway destinations sibling required):
+   * 1. GET `/json/controls/policyLayers/settings?customCategoryId=`
+   * 2. Encode destinations onto the full GET blob (families preserved)
+   * 3. POST the complete object to the same settings path
+   * 4. Re-GET and throw `IbossVerifyError` if bit 110 / type did not persist
+   */
+  async putResourcePolicyDestinations(
+    customCategoryId: number,
+    destinations: DestinationSpec,
+    opts?: { onWrongType?: WrongTypeBehavior; signal?: AbortSignal },
+  ): Promise<ResourcePolicyDestinations> {
+    const current = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+
+    const prepared = prepareDestinationWrite(current, destinations, opts?.onWrongType ?? "reject");
+    if (prepared.warning) this.client.warn(prepared.warning, { customCategoryId });
+    if (prepared.skipped) return decodeDestinations(current);
+
+    // Prior family values win; fill only gaps so Gateway POST cannot default
+    // omitted catN / prioN / bypassSslMitmN (DEVELOP-34251 / 32482 class).
+    const body = {
+      ...generateCategoryFields(),
+      ...generatePriorityFields(),
+      ...generateBypassSslMitmFields(),
+      categories: emptyCategoriesBitmap(),
+      ...prepared.next,
+      customCategoryId,
+    };
+
+    await this.request("gateway", "POST", "/json/controls/policyLayers/settings", {
+      body,
+      signal: opts?.signal,
+    });
+
+    const persisted = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    const failures = collectDestinationVerifyFailures(persisted, prepared.verify);
+    if (failures.length > 0) {
+      throw new IbossVerifyError(
+        `Resource policy ${customCategoryId} destinations POST reported success but GET did not persist: ` +
+          `${failures.join("; ")}. Do not trust POST success or empty saveIgnoredEntries.`,
+        { customCategoryId, failures, actual: persisted },
+      );
+    }
+    return decodeDestinations(persisted);
+  }
+
+  /**
+   * DEVELOP-34916 helper name. Thin alias of `putResourcePolicyDestinations`.
+   */
+  async setDestination(
+    customCategoryId: number,
+    destination: DestinationSpec,
+    opts?: { onWrongType?: WrongTypeBehavior; signal?: AbortSignal },
+  ): Promise<ResourcePolicyDestinations> {
+    return this.putResourcePolicyDestinations(customCategoryId, destination, opts);
+  }
+
+  /**
+   * Ensure Selected Destinations → AI Services (bit 110, categoriesSelectedType 0).
+   */
+  async ensureAiSecurityDestination(
+    customCategoryId: number,
+    opts?: { onWrongType?: WrongTypeBehavior; signal?: AbortSignal },
+  ): Promise<ResourcePolicyDestinations> {
+    return this.putResourcePolicyDestinations(customCategoryId, aiServicesDestination(), opts);
   }
 }

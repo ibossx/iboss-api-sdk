@@ -86,9 +86,17 @@ examples/                  small runnable library scripts
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
   `client.policies.createLayer()` wraps it — don't hand-roll it.
+- **Typed destinations:** never invent the 400-char `categories` bitmap or
+  `categoriesSelectedType`. Use
+  `client.policies.putResourcePolicyDestinations(id, { mode: "selectedWebCategories", categories: ["AI_SERVICES"] })`
+  (`AI_SERVICES` = bit 110). Allowlist + categories throws
+  `IbossPolicyTypeError` (or warn+skip). Details:
+  [docs/api/resource-policies.md](docs/api/resource-policies.md).
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
-  lacks the module; check `ctx.account.subscriptionFlags`). See
+  lacks the module; check `ctx.account.subscriptionFlags`),
+  `IbossPolicyTypeError` (wrong layer type for destinations),
+  `IbossVerifyError` (POST succeeded, GET did not persist). See
   [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
 - **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)`.
   To wrap a new endpoint properly, follow the `add-api-client` skill.

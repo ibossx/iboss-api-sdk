@@ -52,6 +52,7 @@ both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 | `DELETE /json/controls/policyLayers?customCategoryId=` | `deleteLayer(id)` |
 | `GET /json/controls/resourcePolicy/resources?customCategoryId=` | `getResourcePolicyResources(id)` |
 | `PUT /json/controls/resourcePolicy/resources?customCategoryId=` | `associateResources({ customCategoryId, customCategoryNumber, resourceIds })` |
+| purpose-named destinations (typed) | `getResourcePolicyDestinations(id)` / `putResourcePolicyDestinations(id, spec)` |
 
 ## Associating Resources
 
@@ -85,3 +86,38 @@ Gotchas:
 - Group-targeted policies: `linkPolicyToAllSubjects: 0` +
   `associatedGroups: "2,3"` + `enableGroupAssociation: 1` in settings
   (group numbers from [default-policy-groups.md](default-policy-groups.md)).
+
+## Typed destinations (agents — DEVELOP-34925)
+
+Do **not** invent the 400-char `categories` bitmap or the inverted
+`categoriesSelectedType` enum (`0` = Selected Destinations, `1` = all).
+Use the purpose-named API:
+
+```ts
+// PUT …/resourcePolicies/{id}/destinations
+await client.policies.putResourcePolicyDestinations(id, {
+  mode: "selectedWebCategories",
+  categories: ["AI_SERVICES"],
+});
+
+const dest = await client.policies.getResourcePolicyDestinations(id);
+// { mode: "selectedWebCategories", categories: ["AI_SERVICES"] }
+
+await client.policies.ensureAiSecurityDestination(id); // same as above
+```
+
+`AI_SERVICES` maps to **bit 110** on the legacy `categories` bitmap. The SDK
+encodes that plus `categoriesSelectedType: 0` onto a full settings GET/POST
+(`GET`/`POST /json/controls/policyLayers/settings`). Old clients can still
+send the wire fields; agents should not.
+
+**Allowlist + categories is never a silent drop.** An allowlist recreate
+(`customType: 1`) stores an empty `categories` string — AI Services becomes
+unexpressable. `putResourcePolicyDestinations` throws `IbossPolicyTypeError`
+by default. Pass `onWrongType: "warn"` to skip the write (layer unchanged)
+instead of posting a doomed bitmap. Delete the wrong-type layer and recreate
+as `type: "categories"` (`e_custom_category_type_categories`). GET
+`customType` `3` or `13` still carries a bitmap.
+
+Re-GET is required. POST success / empty `saveIgnoredEntries` is not
+persistence — a failed persist throws `IbossVerifyError`.

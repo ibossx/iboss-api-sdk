@@ -103,3 +103,43 @@ export class IbossNetworkError extends IbossError {
     this.cause = cause;
   }
 }
+
+/**
+ * A settings POST reported success but a follow-up GET did not show the
+ * intended fields (bitmap bit, categoriesSelectedType, …).
+ * Empty `saveIgnoredEntries` is not persistence — always re-GET.
+ */
+export class IbossVerifyError extends IbossError {
+  readonly customCategoryId?: number;
+  readonly failures: string[];
+  readonly actual?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    opts?: {
+      customCategoryId?: number;
+      failures?: string[];
+      actual?: Record<string, unknown>;
+    },
+  ) {
+    super(message);
+    this.customCategoryId = opts?.customCategoryId;
+    this.failures = opts?.failures ?? [];
+    this.actual = opts?.actual;
+  }
+}
+
+/**
+ * Typed destinations cannot be expressed on this policy (allowlist/blocklist
+ * silently drops the categories bitmap). Delete and recreate as categories-type.
+ */
+export class IbossPolicyTypeError extends IbossError {
+  readonly customCategoryId?: number;
+  readonly customType?: unknown;
+
+  constructor(message: string, opts?: { customCategoryId?: number; customType?: unknown }) {
+    super(message);
+    this.customCategoryId = opts?.customCategoryId;
+    this.customType = opts?.customType;
+  }
+}
