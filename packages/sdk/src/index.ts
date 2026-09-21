@@ -5,20 +5,20 @@
  * ```ts
  * import { IbossClient } from "@iboss/sdk";
  *
- * const client = new IbossClient({
- *   domain: process.env.IBOSS_CLOUD_DOMAIN!,
- *   credentials: { apiKey: process.env.IBOSS_API_KEY! },
- * });
+ * const client = IbossClient.fromEnv();
+ * // or: new IbossClient({ domain, credentials: { apiKey } })
  * await client.connect();
  * ```
  */
 
 // Client
 export { IbossClient } from "./client/IbossClient.js";
-export type { IbossClientConfig } from "./client/config.js";
+export type { IbossClientConfig, FromConfigOptions } from "./client/config.js";
+export { DEFAULT_USER_AGENT } from "./client/config.js";
 export type { SessionState, AccountInfo } from "./client/session.js";
 export { parseIbossExpiry } from "./client/session.js";
-export type { HostTier, HostMap } from "./client/hosts.js";
+export type { HostTier, HostMap, HostOverrides } from "./client/hosts.js";
+export { inferHostTier, hostOverridesFromEnv, hostnameFromEnvValue } from "./client/hosts.js";
 export type { RequestOptions } from "./client/request.js";
 
 // Credentials
@@ -43,6 +43,8 @@ export {
   IbossHostUnavailableError,
   IbossNotConnectedError,
   IbossNetworkError,
+  IbossVerifyError,
+  IbossPolicyTypeError,
   type HttpMethod,
 } from "./client/errors.js";
 
@@ -63,6 +65,32 @@ export {
   type PolicyLayerType,
   type CreateLayerResult,
 } from "./api/policies.js";
+export {
+  AI_SERVICES_BIT,
+  CATEGORIES_BITMAP_LENGTH,
+  CATEGORIES_SELECTED_TYPE,
+  WEB_CATEGORY_BITS,
+  encodeDestinationBits,
+  decodeDestinations,
+  isCategoryBitSet,
+  isCategoriesCustomType,
+  destinationTypeConflict,
+  type DestinationMode,
+  type DestinationSpec,
+  type WebCategory,
+} from "./api/destinations.js";
+export {
+  mergeResourcePolicySettings,
+  summarizeResourcePolicySettings,
+  type ResourcePolicyPatch,
+  type ResourcePolicySettingsSummary,
+} from "./api/resourcePolicySettings.js";
+export {
+  KNOWN_AI_RISK_ENGINES,
+  encodeAiRiskEngines,
+  type AiRiskEngine,
+  type AiRiskEnginesInput,
+} from "./api/aiRiskEngines.js";
 export type { PacZone, PrivateNetwork } from "./api/locations.js";
 export type { ZeroTrustResource, ListResourcesOptions } from "./api/resources.js";
 export type { FirewallRule } from "./api/firewall.js";

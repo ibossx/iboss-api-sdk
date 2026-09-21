@@ -27,7 +27,9 @@ the right host per capability:
 ```
 
 Gateway/reporter (and Browser Isolation) hostnames are **never hardcoded** —
-they are discovered per account at connect time.
+they are discovered per account at connect time. Agents may pin them via
+`IBOSS_GATEWAY_HOST` / `IBOSS_REPORTER_HOST` (or the `*_URL` forms) when
+using `IbossClient.fromEnv()`; those override discovery.
 
 ## Authentication
 

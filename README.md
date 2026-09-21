@@ -143,10 +143,8 @@ Import the client into your own scripts, services, or AI agents:
 ```ts
 import { IbossClient } from "@iboss/sdk";
 
-const client = new IbossClient({
-  domain: process.env.IBOSS_CLOUD_DOMAIN!,
-  credentials: { apiKey: process.env.IBOSS_API_KEY! },
-});
+const client = IbossClient.fromEnv();
+// or: new IbossClient({ domain, credentials: { apiKey } })
 
 await client.connect();
 
@@ -427,6 +425,8 @@ message strings:
 | `IbossSubscriptionError` | 422 | account lacks the module (DLP, ZTNA, etc.); check `account.subscriptionFlags` |
 | `IbossHostUnavailableError` | n/a | the account has no node of that type (e.g. no reporting cluster) |
 | `IbossNetworkError` | n/a | transport failure after retries |
+| `IbossVerifyError` | n/a | settings POST succeeded but re-GET did not persist the patch |
+| `IbossPolicyTypeError` | n/a | allowlist/blocklist cannot express a categories bitmap |
 
 Retries are automatic (exponential backoff with jitter; POST retries
 transport errors only). Set `IBOSS_DEBUG=1` for request-level logging with

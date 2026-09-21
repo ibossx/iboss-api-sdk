@@ -10,6 +10,8 @@
 | 404 | `IbossApiError` | Wrong path or wrong **host tier** | Confirm the tier: `/json/...`→gateway, `/ibcloud/web/...`→cloud, `/ibreports/...`→reporter |
 | 422 | `IbossSubscriptionError` | Account lacks the module's subscription, or payload shape invalid | Check `session.account.subscriptionFlags`; for DLP/ZTNA treat as an expected skip |
 | 5xx / network | retried, then `IbossApiError` / `IbossNetworkError` | Transient platform/network issue | The SDK already retried (idempotent methods) |
+| n/a | `IbossVerifyError` | Settings POST succeeded but re-GET did not show the intended fields (bitmap / `categoriesSelectedType` / `dlpPolicyMethod` / `aiRisk*`) | Do not trust POST success or empty `saveIgnoredEntries`; fix the payload or recreate as categories-type |
+| n/a | `IbossPolicyTypeError` | Allowlist/blocklist + categories destinations | Bitmap would be silently dropped. Delete and recreate with `e_custom_category_type_categories` |
 
 All API errors carry `method`, `url`, `status`, and a truncated response
 `body` for diagnostics.
@@ -42,6 +44,14 @@ no reporting cluster provisioned).
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),
   `prio0..prio110` (=0), `bypassSslMitm0..bypassSslMitm110` (=0), and a
   400-char `categories` bitmap. Helpers: `generateCategoryFields()` etc.
+  Agents should use `patchResourcePolicySettings` so they never send those
+  families by hand.
+- **AI Services destination** is bit **110** of the bitmap plus
+  `categoriesSelectedType: 0` (Selected Destinations — inverted enum). Use
+  `ensureAiSecurityDestination` / `setDestination`. Allowlist recreate
+  (`customType: 1`) silently drops the bitmap.
+- **Always re-GET after a settings POST.** Empty `saveIgnoredEntries` is not
+  proof the fields persisted.
 - **Routed peer creation returns no UUID.** After
   `PUT /json/network/mobileClients/peer`, re-list peers and match on
   `locationUuids`/name; propagation can take seconds. Use

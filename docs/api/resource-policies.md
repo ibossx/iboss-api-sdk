@@ -40,6 +40,46 @@ same endpoints but have `isZeroTrustResourcePolicy: 0`.)
 `client.policies.createLayer({ isZeroTrustResourcePolicy: 1, ... })` performs
 both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 
+## Agent helpers (DEVELOP-34914 / 34916)
+
+Agents should not send the 400-char `categories` bitmap or invent
+`categoriesSelectedType`. Sep 9–10 Bug Replicator traces: the settings POST
+that **stuck** used `categoriesSelectedType: 0` (UI “Selected Destinations”)
+and a 400-char bitmap with **only bit 110** set (AI Services). Allowlist
+recreate (`customType: 1`) **silently drops** that bitmap — later POSTs can
+flip `aiRiskEnabled: 1` and still leave destinations empty. POST success
+(including empty `saveIgnoredEntries`) is **not** persistence.
+
+```ts
+const client = IbossClient.fromEnv(); // IBOSS_API_KEY + IBOSS_CLOUD_DOMAIN
+
+const policy = await client.policies.createResourcePolicy({
+  name: "AI Security",
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  aiRiskEnabled: true,
+  aiRiskEngines: "chatgpt",
+  linkPolicyToAllSubjects: true,
+  aiRiskMonitoringMessage: "AI use is monitored.",
+});
+
+await client.policies.ensureAiSecurityDestination(policy.customCategoryId);
+
+await client.policies.patchResourcePolicySettings(policy.customCategoryId, {
+  aiRiskEnabled: 1,
+  aiRiskEngines: "all",
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+});
+```
+
+| Method | What it does |
+|---|---|
+| `getResourcePolicySettings(id, { view? })` | Dedicated read. Default `summary` hides the bitmap / catN families. `full` is the wire blob. Today this wraps `GET /json/controls/policyLayers/settings`. |
+| `patchResourcePolicySettings(id, patch)` | Get → merge → POST the existing settings path. Agents send **only changed fields**. Auto-fills `cat0..cat110` / `prio0..prio110` / `bypassSslMitm0..bypassSslMitm110` unless `advanced: true`. Forces `dlpPolicyMethod: 2`. Re-GETs and throws `IbossVerifyError` if intended fields did not persist. |
+| `setDestination` / `ensureAiSecurityDestination` | Encode bit 110 + `categoriesSelectedType: 0`. Reject allowlist+categories (`IbossPolicyTypeError`); pass `onWrongType: "warn"` to skip encoding. |
+| `createResourcePolicy({…})` | PUT categories-type structure + POST settings + re-GET. Returns effective settings, not just ids. |
+
+`updateLayerSettings(fullBlob)` and `createLayer()` are unchanged full-replace / id-returning APIs.
+
 ## Endpoints
 
 | Endpoint | SDK method |
@@ -47,8 +87,9 @@ both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 | `GET /json/controls/resourcePolicies` | `listResourcePolicies()` |
 | `GET /json/controls/policyLayers/all?isZeroTrustLayer=1&...` | `listLayers({ isZeroTrustLayer: 1 })` |
 | create (two-step) | `createLayer({ isZeroTrustResourcePolicy: 1, ... })` |
-| `GET /json/controls/policyLayers/settings?customCategoryId=` | `getLayerSettings(id)` |
-| `POST /json/controls/policyLayers/settings` | `updateLayerSettings(...)` |
+| create + verify (agent) | `createResourcePolicy({…})` |
+| `GET /json/controls/policyLayers/settings?customCategoryId=` | `getLayerSettings(id)` / `getResourcePolicySettings(id)` |
+| `POST /json/controls/policyLayers/settings` | `updateLayerSettings(...)` (full replace) / `patchResourcePolicySettings(id, patch)` (get-merge-post) |
 | `DELETE /json/controls/policyLayers?customCategoryId=` | `deleteLayer(id)` |
 | `GET /json/controls/resourcePolicy/resources?customCategoryId=` | `getResourcePolicyResources(id)` |
 | `PUT /json/controls/resourcePolicy/resources?customCategoryId=` | `associateResources({ customCategoryId, customCategoryNumber, resourceIds })` |

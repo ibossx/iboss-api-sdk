@@ -20,7 +20,29 @@
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
  * (createLayer adds it when isZeroTrustResourcePolicy: 1).
  */
+import { IbossVerifyError } from "../client/errors.js";
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
+import { aiServicesDestination, type DestinationSpec } from "./destinations.js";
+import {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
+import {
+  collectVerifyFailures,
+  mergeResourcePolicySettings,
+  viewResourcePolicySettings,
+  type ResourcePolicyPatch,
+  type ResourcePolicySettingsView,
+} from "./resourcePolicySettings.js";
+
+export {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
 
 export type PolicyLayerType = "blocklist" | "allowlist" | "categories";
 
@@ -52,32 +74,6 @@ export interface CreateLayerResult {
 export interface PolicyLayerUrl {
   url: string;
   [key: string]: unknown;
-}
-
-/** Fields cat0..cat110 = 3 (category action defaults). */
-export function generateCategoryFields(value = 3): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`cat${i}`] = value;
-  return fields;
-}
-
-/** Fields prio0..prio110 = 0. */
-export function generatePriorityFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`prio${i}`] = value;
-  return fields;
-}
-
-/** Fields bypassSslMitm0..bypassSslMitm110 = 0. */
-export function generateBypassSslMitmFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`bypassSslMitm${i}`] = value;
-  return fields;
-}
-
-/** The 400-character all-zeros categories bitmap used in settings payloads. */
-export function emptyCategoriesBitmap(): string {
-  return "0".repeat(400);
 }
 
 export class PoliciesApi extends SubClient {
@@ -325,5 +321,177 @@ export class PoliciesApi extends SubClient {
         resourceIds: params.resourceIds,
       },
     });
+  }
+
+  /**
+   * Dedicated Resource Policy read (DEVELOP-34914). Same wire path as
+   * `getLayerSettings` today (`GET /json/controls/policyLayers/settings`);
+   * the agent-facing noun is Resource Policy, not Policy Layers.
+   *
+   * `view: "summary"` (default) hides the 400-char bitmap and catN families.
+   * `view: "full"` returns the wire blob.
+   */
+  async getResourcePolicySettings(
+    customCategoryId: number,
+    opts?: { view?: "summary" | "full"; signal?: AbortSignal },
+  ): Promise<ResourcePolicySettingsView> {
+    const full = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    return viewResourcePolicySettings(full, opts?.view ?? "summary");
+  }
+
+  /**
+   * Agent UPDATE (DEVELOP-34914): send only the fields that changed.
+   *
+   * 1. GET current settings
+   * 2. deep-merge the patch
+   * 3. inject `cat0..cat110` / `prio0..prio110` / `bypassSslMitm0..bypassSslMitm110`
+   *    (and a 400-char bitmap) unless `advanced: true`
+   * 4. force `dlpPolicyMethod: 2` on resource policies unless the patch sets it
+   * 5. encode `destinations` to bit 110 + `categoriesSelectedType: 0`
+   * 6. POST the full blob to the existing settings endpoint
+   * 7. re-GET and throw `IbossVerifyError` if intended fields did not persist
+   *
+   * `updateLayerSettings(fullBlob)` stays a full replace.
+   */
+  async patchResourcePolicySettings(
+    customCategoryId: number,
+    patch: ResourcePolicyPatch,
+    opts?: { view?: "summary" | "full"; signal?: AbortSignal },
+  ): Promise<ResourcePolicySettingsView> {
+    const current = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    const { next, verify, warning } = mergeResourcePolicySettings(current, patch);
+    if (warning) this.client.warn(warning, { customCategoryId });
+
+    await this.request("gateway", "POST", "/json/controls/policyLayers/settings", {
+      body: next,
+      signal: opts?.signal,
+    });
+
+    const persisted = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    const failures = collectVerifyFailures(persisted, verify);
+    if (failures.length > 0) {
+      throw new IbossVerifyError(
+        `Resource policy ${customCategoryId} POST reported success but GET did not persist: ` +
+          `${failures.join("; ")}. Do not trust POST success or empty saveIgnoredEntries.`,
+        { customCategoryId, failures, actual: persisted },
+      );
+    }
+    return viewResourcePolicySettings(persisted, opts?.view ?? "summary");
+  }
+
+  /**
+   * Set destinations without touching the bitmap / categoriesSelectedType
+   * (DEVELOP-34916). Thin caller of `patchResourcePolicySettings`.
+   *
+   * Rejects allowlist+categories by default (silent bitmap drop). Pass
+   * `onWrongType: "warn"` to skip encoding and leave the layer unchanged.
+   */
+  async setDestination(
+    customCategoryId: number,
+    destination: DestinationSpec,
+    opts?: { onWrongType?: "reject" | "warn"; view?: "summary" | "full"; signal?: AbortSignal },
+  ): Promise<ResourcePolicySettingsView> {
+    return this.patchResourcePolicySettings(
+      customCategoryId,
+      { destinations: destination, onWrongType: opts?.onWrongType },
+      { view: opts?.view, signal: opts?.signal },
+    );
+  }
+
+  /**
+   * Ensure Selected Destinations → AI Services (bit 110, categoriesSelectedType 0).
+   */
+  async ensureAiSecurityDestination(
+    customCategoryId: number,
+    opts?: { onWrongType?: "reject" | "warn"; view?: "summary" | "full"; signal?: AbortSignal },
+  ): Promise<ResourcePolicySettingsView> {
+    return this.setDestination(customCategoryId, aiServicesDestination(), opts);
+  }
+
+  /**
+   * One-shot Resource Policy create (DEVELOP-34914). PUT structure as
+   * categories-type + `isZeroTrustResourcePolicy: 1`, POST settings with
+   * families + `dlpPolicyMethod: 2` + optional destinations, re-GET, return
+   * effective settings. `createLayer` is unchanged and still returns ids only.
+   */
+  async createResourcePolicy(params: {
+    name: string;
+    destinations?: DestinationSpec;
+    aiRiskEnabled?: number | boolean;
+    aiRiskEngines?: ResourcePolicyPatch["aiRiskEngines"];
+    linkPolicyToAllSubjects?: number | boolean;
+    aiRiskMonitoringMessage?: string;
+    aiRiskMonitoringMessageEnabled?: number | boolean;
+    aiRiskMonitoringMessageTitle?: string;
+    placeAtPosition?: number;
+    enterpriseOwned?: 0 | 1;
+    settings?: ResourcePolicyPatch;
+    view?: "summary" | "full";
+    signal?: AbortSignal;
+  }): Promise<ResourcePolicySettingsView> {
+    const created = await this.createLayerStructure({
+      name: params.name,
+      type: "categories",
+      isZeroTrustResourcePolicy: 1,
+      enterpriseOwned: params.enterpriseOwned,
+      placeAtPosition: params.placeAtPosition,
+    });
+
+    // Settings live only in step 2 — do not treat the PUT id as a finished policy.
+    const current: Record<string, unknown> = {
+      customCategoryId: created.customCategoryId,
+      customCategoryNumber: created.customCategoryNumber,
+      customCategoryName: params.name,
+      isZeroTrustResourcePolicy: 1,
+      policyEnabled: 1,
+      customType: "e_custom_category_type_categories",
+    };
+    const { next, verify, warning } = mergeResourcePolicySettings(current, {
+      destinations: params.destinations,
+      aiRiskEnabled: params.aiRiskEnabled,
+      aiRiskEngines: params.aiRiskEngines,
+      linkPolicyToAllSubjects: params.linkPolicyToAllSubjects ?? 1,
+      aiRiskMonitoringMessage: params.aiRiskMonitoringMessage,
+      aiRiskMonitoringMessageEnabled: params.aiRiskMonitoringMessageEnabled,
+      aiRiskMonitoringMessageTitle: params.aiRiskMonitoringMessageTitle,
+      ...params.settings,
+    });
+    if (warning) this.client.warn(warning, { customCategoryId: created.customCategoryId });
+
+    await this.request("gateway", "POST", "/json/controls/policyLayers/settings", {
+      body: next,
+      signal: params.signal,
+    });
+
+    const persisted = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      "/json/controls/policyLayers/settings",
+      { query: { customCategoryId: created.customCategoryId }, signal: params.signal },
+    );
+    const failures = collectVerifyFailures(persisted, verify);
+    if (failures.length > 0) {
+      throw new IbossVerifyError(
+        `Resource policy ${created.customCategoryId} create POST reported success but GET did not persist: ` +
+          `${failures.join("; ")}. Do not trust POST success or empty saveIgnoredEntries.`,
+        { customCategoryId: created.customCategoryId, failures, actual: persisted },
+      );
+    }
+    return viewResourcePolicySettings(persisted, params.view ?? "summary");
   }
 }

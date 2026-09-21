@@ -54,5 +54,14 @@ console. The distinguishing fields:
 - **List envelopes** — gateway lists usually return
   `{ entries: [...], totalCount }`; cloud lists return bare arrays or
   `{ successful, result }`. Sub-clients normalize to plain arrays.
-- **Escape hatch** — `client.raw(tier, method, path, { query, body })` or
-  `npx iboss api <METHOD> <path> [--host tier]` for anything not wrapped.
+- **Escape hatch** — `client.raw(tier, method, path, { query, body })`,
+  `client.raw(method, path)` (tier inferred from `/json` / `/ibreports` /
+  `/ibcloud`), or `npx iboss api <METHOD> <path> [--host tier]` for
+  anything not wrapped.
+
+## Agent-friendly Resource Policy helpers
+
+See [resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
+for `fromEnv` / `patchResourcePolicySettings` / `ensureAiSecurityDestination`.
+These are additive wrappers over today's `GET/POST /json/controls/policyLayers/settings`
+(DEVELOP-34913 / 34914 / 34916). Existing methods and wire paths are unchanged.

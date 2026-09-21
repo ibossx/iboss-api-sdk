@@ -20,32 +20,63 @@ import {
   type MockKeyScope,
 } from "./fixtures.js";
 
+export interface MockRequestMeta {
+  method: string;
+  host: string;
+  path: string;
+  authorization?: string;
+  userAgent?: string;
+}
+
 export interface MockState {
   /** Requests received, for assertions: "METHOD host/path". */
   requests: string[];
+  /** Last-seen headers per request (auth + UA). */
+  requestMeta: MockRequestMeta[];
   /** Policy layers created via the two-step flow. */
   policyLayers: Array<Record<string, unknown>>;
-  /** Settings payloads applied to layers. */
+  /** Settings payloads applied to layers (POST body as sent). */
   layerSettings: Array<Record<string, unknown>>;
+  /** Latest stored settings by customCategoryId (what GET returns). */
+  settingsById: Record<number, Record<string, unknown>>;
   /** URLs added to layers. */
   layerUrls: Array<Record<string, unknown>>;
   /** Resource associations: query customCategoryId + body. */
   resourceAssociations: Array<{ customCategoryId: string; body: Record<string, unknown> }>;
   /** Force 5xx on the next N matching GETs of this path (transient-failure tests). */
   failNextGets: { path: string; remaining: number } | null;
+  /**
+   * POST settings returns success but GET omits the destination bitmap —
+   * the Sep 10 "successful POST, empty saveIgnoredEntries, bit 110 missing" case.
+   */
+  dropDestinationsOnPost: boolean;
   nextLayerId: number;
 }
 
 export function createMockState(): MockState {
   return {
     requests: [],
+    requestMeta: [],
     policyLayers: [],
     layerSettings: [],
+    settingsById: {},
     layerUrls: [],
     resourceAssociations: [],
     failNextGets: null,
+    dropDestinationsOnPost: false,
     nextLayerId: 100,
   };
+}
+
+function wireCustomType(createType: unknown): unknown {
+  if (createType === "e_custom_category_type_allowlist") return 1;
+  if (createType === "e_custom_category_type_categories") return 3;
+  if (createType === "e_custom_category_type_blacklist") return 0;
+  return createType;
+}
+
+function isAllowlistType(createType: unknown): boolean {
+  return createType === "e_custom_category_type_allowlist" || createType === 1 || createType === "1";
 }
 
 function cookieMap(header: string | undefined): Record<string, string> {
@@ -70,7 +101,15 @@ export function createMockIboss(state: MockState): Hono {
   // Global auth + bookkeeping middleware.
   app.use("*", async (c, next) => {
     const host = new URL(c.req.url).hostname;
-    state.requests.push(`${c.req.method} ${host}${new URL(c.req.url).pathname}`);
+    const path = new URL(c.req.url).pathname;
+    state.requests.push(`${c.req.method} ${host}${path}`);
+    state.requestMeta.push({
+      method: c.req.method,
+      host,
+      path,
+      authorization: c.req.header("authorization"),
+      userAgent: c.req.header("user-agent"),
+    });
 
     if (!scopeOf(c)) {
       return c.json({ message: "Unauthorized" }, 401);
@@ -175,6 +214,28 @@ export function createMockIboss(state: MockState): Hono {
         state.resourceAssociations.push({ customCategoryId, body });
         return c.json({ successful: true });
       });
+      gateway.get("/json/controls/resourcePolicies", (c) => {
+        const entries = state.policyLayers.filter((l) => l.isZeroTrustResourcePolicy === 1);
+        return c.json({ entries, totalCount: entries.length });
+      });
+      gateway.get("/json/controls/policyLayers/settings", (c) => {
+        const id = Number(c.req.query("customCategoryId"));
+        if (!Number.isFinite(id)) return c.json({ message: "customCategoryId required" }, 400);
+        const layer = state.policyLayers.find((l) => l.customCategoryId === id);
+        const stored = state.settingsById[id];
+        if (!layer && !stored) return c.json({ message: "not found" }, 404);
+        const customType = wireCustomType(layer?.customType ?? stored?.customType);
+        // After a settings POST, some live GETs report 13 instead of 3 — both are categories-shaped.
+        const afterUpdate =
+          stored && customType === 3 ? 13 : customType;
+        return c.json({
+          ...(layer ?? {}),
+          ...(stored ?? {}),
+          customCategoryId: id,
+          customType: afterUpdate,
+          categoryType: afterUpdate,
+        });
+      });
       gateway.put("/json/controls/policyLayers", async (c) => {
         const body = await c.req.json<Record<string, unknown>>();
         const id = state.nextLayerId++;
@@ -185,7 +246,20 @@ export function createMockIboss(state: MockState): Hono {
       gateway.post("/json/controls/policyLayers/settings", async (c) => {
         const body = await c.req.json<Record<string, unknown>>();
         state.layerSettings.push(body);
-        return c.json({ successful: true });
+        const id = Number(body.customCategoryId);
+        const layer = state.policyLayers.find((l) => l.customCategoryId === id);
+        const stored: Record<string, unknown> = { ...body };
+        // Allowlist recreate silently drops the bitmap (Sep 9–10 traces).
+        if (isAllowlistType(layer?.customType) || state.dropDestinationsOnPost) {
+          stored.categories = "";
+          delete stored.categoriesSelectedType;
+        }
+        if (Number.isFinite(id)) state.settingsById[id] = stored;
+        return c.json({
+          message: "Successfully updated Resource Policy.",
+          saveIgnoredEntries: [],
+          successful: true,
+        });
       });
       gateway.get("/json/controls/policyLayers/urls", (c) => c.json({ entries: state.layerUrls }));
       gateway.put("/json/controls/policyLayers/urls", async (c) => {

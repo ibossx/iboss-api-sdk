@@ -90,8 +90,14 @@ examples/                  small runnable library scripts
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
   lacks the module; check `ctx.account.subscriptionFlags`). See
   [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
-- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)`.
-  To wrap a new endpoint properly, follow the `add-api-client` skill.
+- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)` or
+  `client.raw(method, path)` (tier inferred from `/json` vs `/ibreports`
+  vs `/ibcloud`). To wrap a new endpoint properly, follow the
+  `add-api-client` skill.
+- **Agent Resource Policy helpers:** `IbossClient.fromEnv()` /
+  `fromProfile()`; `patchResourcePolicySettings` (get-merge-post, re-GET);
+  `setDestination` / `ensureAiSecurityDestination` (bit 110, type 0 —
+  never send the categories bitmap). See docs/api/resource-policies.md.
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.
