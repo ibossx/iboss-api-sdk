@@ -95,9 +95,11 @@ examples/                  small runnable library scripts
   vs `/ibcloud`). To wrap a new endpoint properly, follow the
   `add-api-client` skill.
 - **Agent Resource Policy helpers:** `IbossClient.fromEnv()` /
-  `fromProfile()`; `patchResourcePolicySettings` (get-merge-post, re-GET);
-  `setDestination` / `ensureAiSecurityDestination` (bit 110, type 0 —
-  never send the categories bitmap). See docs/api/resource-policies.md.
+  `fromProfile()`; `patchResourcePolicySettings` (SDK-only GET →
+  deep-merge → full POST of `/json/controls/policyLayers/settings`; no
+  native Gateway PATCH; TOCTOU accepted for agent v1); `setDestination` /
+  `ensureAiSecurityDestination` (bit 110, type 0 — never send the
+  categories bitmap). See docs/api/resource-policies.md.
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.

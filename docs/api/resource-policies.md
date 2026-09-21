@@ -42,6 +42,23 @@ both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 
 ## Agent helpers (DEVELOP-34914 / 34916)
 
+**SDK-only.** There is no native Gateway PATCH and this repo does not
+change lockboxLinux / Gateway. `patchResourcePolicySettings` is
+get → deep-merge → POST of the **full** settings object on the existing
+paths:
+
+```
+GET  /json/controls/policyLayers/settings?customCategoryId=…
+POST /json/controls/policyLayers/settings    body = merged GET + patch
+```
+
+Gateway POST applies defaults for omitted fields (same class as
+[DEVELOP-34251](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34251)
+and [DEVELOP-32482](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-32482)),
+so a partial body would wipe `catN` / `prioN` / `bypassSslMitmN`. Omitted
+patch keys **keep prior GET values**. The GET→merge→POST race (TOCTOU) is
+accepted for agent v1.
+
 Agents should not send the 400-char `categories` bitmap or invent
 `categoriesSelectedType`. Sep 9–10 Bug Replicator traces: the settings POST
 that **stuck** used `categoriesSelectedType: 0` (UI “Selected Destinations”)
@@ -74,7 +91,7 @@ await client.policies.patchResourcePolicySettings(policy.customCategoryId, {
 | Method | What it does |
 |---|---|
 | `getResourcePolicySettings(id, { view? })` | Dedicated read. Default `summary` hides the bitmap / catN families. `full` is the wire blob. Today this wraps `GET /json/controls/policyLayers/settings`. |
-| `patchResourcePolicySettings(id, patch)` | Get → merge → POST the existing settings path. Agents send **only changed fields**. Auto-fills `cat0..cat110` / `prio0..prio110` / `bypassSslMitm0..bypassSslMitm110` unless `advanced: true`. Forces `dlpPolicyMethod: 2`. Re-GETs and throws `IbossVerifyError` if intended fields did not persist. |
+| `patchResourcePolicySettings(id, patch)` | SDK-only get → deep-merge → **full** POST of today’s settings path. Not a Gateway PATCH. Agents send only changed fields; omitted keys keep prior values including all catN/prioN/bypassSslMitmN. Re-GETs; TOCTOU accepted for agent v1. |
 | `setDestination` / `ensureAiSecurityDestination` | Encode bit 110 + `categoriesSelectedType: 0`. Reject allowlist+categories (`IbossPolicyTypeError`); pass `onWrongType: "warn"` to skip encoding. |
 | `createResourcePolicy({…})` | PUT categories-type structure + POST settings + re-GET. Returns effective settings, not just ids. |
 
@@ -121,6 +138,9 @@ Gotchas:
   body field named **`resourceIds`** — both ids are required.
 - `dlpPolicyMethod: 2` is mandatory in every Resource Policy settings
   payload; omitting it produces broken policies.
+- **No native Gateway PATCH.** SDK `patchResourcePolicySettings` is GET →
+  deep-merge → full POST. TOCTOU between those calls is accepted for
+  agent v1.
 - CASB-control policies are allowlist-type Resource Policies with
   `enterpriseOwned: 1`.
 - Group-targeted policies: `linkPolicyToAllSubjects: 0` +

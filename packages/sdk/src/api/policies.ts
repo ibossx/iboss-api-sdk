@@ -345,18 +345,19 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Agent UPDATE (DEVELOP-34914): send only the fields that changed.
+   * SDK-only UPDATE (DEVELOP-34914). There is **no native Gateway PATCH**.
    *
-   * 1. GET current settings
-   * 2. deep-merge the patch
-   * 3. inject `cat0..cat110` / `prio0..prio110` / `bypassSslMitm0..bypassSslMitm110`
-   *    (and a 400-char bitmap) unless `advanced: true`
-   * 4. force `dlpPolicyMethod: 2` on resource policies unless the patch sets it
-   * 5. encode `destinations` to bit 110 + `categoriesSelectedType: 0`
-   * 6. POST the full blob to the existing settings endpoint
-   * 7. re-GET and throw `IbossVerifyError` if intended fields did not persist
+   * 1. GET `/json/controls/policyLayers/settings?customCategoryId=`
+   * 2. Deep-merge the patch onto the full GET blob (omitted keys keep
+   *    prior values, including every catN / prioN / bypassSslMitmN)
+   * 3. Fill family members the GET lacked so Gateway POST cannot apply
+   *    defaults for missing fields (DEVELOP-34251 / DEVELOP-32482)
+   * 4. Encode `destinations` to bit 110 + `categoriesSelectedType: 0`
+   * 5. POST the **full** merged object to the same settings path
+   * 6. Re-GET and throw `IbossVerifyError` if intended fields did not persist
    *
-   * `updateLayerSettings(fullBlob)` stays a full replace.
+   * TOCTOU (GET → merge → POST) is accepted for agent v1.
+   * `updateLayerSettings(fullBlob)` stays a caller-supplied full replace.
    */
   async patchResourcePolicySettings(
     customCategoryId: number,

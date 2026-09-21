@@ -63,5 +63,7 @@ console. The distinguishing fields:
 
 See [resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
 for `fromEnv` / `patchResourcePolicySettings` / `ensureAiSecurityDestination`.
-These are additive wrappers over today's `GET/POST /json/controls/policyLayers/settings`
-(DEVELOP-34913 / 34914 / 34916). Existing methods and wire paths are unchanged.
+These are additive SDK wrappers over today's
+`GET/POST /json/controls/policyLayers/settings` (DEVELOP-34913 / 34914 /
+34916). There is no native Gateway PATCH. Existing methods and wire paths
+are unchanged.

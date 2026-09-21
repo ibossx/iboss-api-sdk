@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { IbossClient } from "../../src/client/IbossClient.js";
 import { IbossPolicyTypeError, IbossVerifyError } from "../../src/client/errors.js";
 import { AI_SERVICES_BIT } from "../../src/api/destinations.js";
+import { hasFieldFamily, POLICY_FIELD_FAMILY_MAX } from "../../src/api/policyFields.js";
 import type { ResourcePolicySettingsSummary } from "../../src/api/resourcePolicySettings.js";
 import { CLOUD_HOST, GATEWAY_HOST, MOCK_API_KEY, REPORTER_HOST } from "../mock-server/fixtures.js";
 import { createMockState, mockFetch } from "../mock-server/mockIboss.js";
@@ -37,13 +38,17 @@ describe("resource-policy patch UPDATE (DEVELOP-34914)", () => {
     expect(summary.dlpPolicyMethod).toBe(2);
 
     const posted = state.layerSettings.at(-1)!;
+    expect(hasFieldFamily(posted, "cat")).toBe(true);
+    expect(hasFieldFamily(posted, "prio")).toBe(true);
+    expect(hasFieldFamily(posted, "bypassSslMitm")).toBe(true);
     expect(posted.cat0).toBe(3);
     expect(posted.cat110).toBe(3);
     expect(posted.prio0).toBe(0);
     expect(posted.bypassSslMitm110).toBe(0);
-    expect(posted.showPACUrl).toBeUndefined();
     expect((posted.categories as string).length).toBe(400);
     expect(posted.dlpPolicyMethod).toBe(2);
+    expect(state.requests.some((r) => r.startsWith("PATCH "))).toBe(false);
+    expect(state.requests.some((r) => r.includes("/settings/patch"))).toBe(false);
 
     const full = (await client.policies.getResourcePolicySettings(created.customCategoryId, {
       view: "full",
@@ -67,6 +72,39 @@ describe("resource-policy patch UPDATE (DEVELOP-34914)", () => {
         destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
       }),
     ).rejects.toBeInstanceOf(IbossVerifyError);
+  });
+
+  it("omit-safe: distinctive prior family values survive a partial patch POST", async () => {
+    const state = createMockState();
+    const client = makeClient(state);
+    const created = await client.policies.createLayer({
+      name: "AI Security Policy",
+      type: "categories",
+      isZeroTrustResourcePolicy: 1,
+    });
+    const stored = state.settingsById[created.customCategoryId]!;
+    stored.cat7 = 9;
+    stored.prio3 = 4;
+    stored.bypassSslMitm10 = 1;
+    stored.showPACUrl = 1;
+    stored.aiRiskMonitoringMessage = "keep me";
+
+    await client.policies.patchResourcePolicySettings(created.customCategoryId, {
+      aiRiskEnabled: 1,
+    });
+
+    const posted = state.layerSettings.at(-1)!;
+    expect(posted.aiRiskEnabled).toBe(1);
+    expect(posted.cat7).toBe(9);
+    expect(posted.prio3).toBe(4);
+    expect(posted.bypassSslMitm10).toBe(1);
+    expect(posted.showPACUrl).toBe(1);
+    expect(posted.aiRiskMonitoringMessage).toBe("keep me");
+    for (let i = 0; i <= POLICY_FIELD_FAMILY_MAX; i++) {
+      expect(posted[`cat${i}`]).toBeDefined();
+      expect(posted[`prio${i}`]).toBeDefined();
+      expect(posted[`bypassSslMitm${i}`]).toBeDefined();
+    }
   });
 });
 

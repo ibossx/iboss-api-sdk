@@ -1,12 +1,18 @@
 /**
- * Get-merge-post + verify helpers for Resource Policy settings (DEVELOP-34914).
+ * SDK-only get → deep-merge → POST for Resource Policy settings
+ * (DEVELOP-34914). There is no native Gateway PATCH.
  *
- * POST /json/controls/policyLayers/settings is a full replace. Agents send
- * only the fields they intend to change; this module GETs the current blob,
- * merges, injects catN/prioN/bypassSslMitmN unless advanced: true, forces
- * dlpPolicyMethod: 2 on resource policies, encodes typed destinations, and
- * describes what a follow-up GET must still show. POST success (including
- * empty saveIgnoredEntries) is not proof of persistence.
+ * Wire path (unchanged):
+ *   GET  /json/controls/policyLayers/settings?customCategoryId=…
+ *   POST /json/controls/policyLayers/settings   body = full merged object
+ *
+ * Gateway POST applies defaults for missing fields (DEVELOP-34251 /
+ * DEVELOP-32482), so the POST body must round-trip the entire GET blob
+ * including catN / prioN / bypassSslMitmN. Omitted patch keys keep prior
+ * values. TOCTOU between GET and POST is accepted for agent v1.
+ *
+ * POST success (including empty saveIgnoredEntries) is not persistence —
+ * callers re-GET and verify.
  */
 import { encodeAiRiskEngines, type AiRiskEnginesInput } from "./aiRiskEngines.js";
 import {
@@ -36,8 +42,8 @@ export interface ResourcePolicyPatch {
   linkPolicyToAllSubjects?: number | boolean;
   dlpPolicyMethod?: number;
   /**
-   * Skip auto-fill of catN / prioN / bypassSslMitmN / the 400-char bitmap.
-   * Only for callers that already send a complete settings blob.
+   * Reserved. Families always round-trip: Gateway POST defaults omitted
+   * catN / prioN / bypassSslMitmN, so the SDK never sends a partial blob.
    */
   advanced?: boolean;
   /** Default reject — allowlist+categories is a silent bitmap drop. */
@@ -138,7 +144,8 @@ function isResourcePolicy(settings: Record<string, unknown>): boolean {
 }
 
 /**
- * GET → merge → inject families / dlpPolicyMethod: 2 / destination encoding.
+ * Deep-merge `patch` onto the GET blob. Omitted keys keep prior values.
+ * Always emits a full object (families included) for the existing POST.
  * Throws on allowlist+categories when onWrongType is reject (the default).
  */
 export function mergeResourcePolicySettings(
@@ -170,11 +177,12 @@ export function mergeResourcePolicySettings(
     next = { ...next, ...encoded };
   }
 
-  if (!patch.advanced) {
-    next = ensureFieldFamilies(next);
-  }
+  // Always POST a complete blob. Prior family values win; fill only gaps.
+  next = ensureFieldFamilies(next);
 
-  if (isResourcePolicy(next) && fieldPatch.dlpPolicyMethod === undefined) {
+  // Fill dlpPolicyMethod only when GET+patch both omitted it — do not
+  // overwrite a prior value (omit-safe).
+  if (isResourcePolicy(next) && next.dlpPolicyMethod === undefined) {
     next.dlpPolicyMethod = 2;
   }
 
@@ -195,7 +203,7 @@ export function mergeResourcePolicySettings(
     verify.fields.categoriesSelectedType = encoded.categoriesSelectedType;
   }
 
-  if (isResourcePolicy(next) && fieldPatch.dlpPolicyMethod === undefined) {
+  if (isResourcePolicy(next) && fieldPatch.dlpPolicyMethod === undefined && next.dlpPolicyMethod === 2) {
     verify.fields.dlpPolicyMethod = 2;
   }
 

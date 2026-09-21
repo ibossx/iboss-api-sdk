@@ -1,8 +1,11 @@
 /**
  * Generated settings-field families that the platform expects on every
- * policy-layer / resource-policy settings POST. Omitting them is a full
- * replace of those families (they wipe to unset), which is why the agent
- * patch path re-injects them unless `advanced: true`.
+ * policy-layer / resource-policy settings POST.
+ *
+ * Gateway POST `/json/controls/policyLayers/settings` applies defaults for
+ * omitted fields (same class as DEVELOP-34251 / DEVELOP-32482). The SDK
+ * patch path therefore round-trips the full GET object, including every
+ * catN / prioN / bypassSslMitmN member, and only fills keys the GET lacked.
  */
 
 /** Inclusive upper bound of catN / prioN / bypassSslMitmN (111 members). */
@@ -50,10 +53,10 @@ export function hasFieldFamily(
  * already supplied.
  */
 export function ensureFieldFamilies(settings: Record<string, unknown>): Record<string, unknown> {
+  // Keep a present bitmap even when empty (allowlist GET is length 0).
+  // Only invent zeros when GET omitted the field entirely.
   const categories =
-    typeof settings.categories === "string" && settings.categories.length > 0
-      ? settings.categories
-      : emptyCategoriesBitmap();
+    typeof settings.categories === "string" ? settings.categories : emptyCategoriesBitmap();
   return {
     ...generateCategoryFields(),
     ...generatePriorityFields(),

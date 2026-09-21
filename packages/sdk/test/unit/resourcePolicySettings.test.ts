@@ -10,6 +10,8 @@ import {
   generateBypassSslMitmFields,
   generateCategoryFields,
   generatePriorityFields,
+  hasFieldFamily,
+  POLICY_FIELD_FAMILY_MAX,
 } from "../../src/api/policyFields.js";
 
 function currentSettings(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -31,32 +33,61 @@ function currentSettings(overrides: Record<string, unknown> = {}): Record<string
 }
 
 describe("mergeResourcePolicySettings (DEVELOP-34914)", () => {
-  it("lets agents send only changed fields and keeps unrelated GET fields", () => {
-    const current = currentSettings({ showPACUrl: 1, cat7: 9 });
+  it("omit-safe merge: omitted patch fields keep prior GET values, including full families", () => {
+    const current = currentSettings({
+      showPACUrl: 1,
+      policyAction: 1,
+      cat7: 9,
+      prio3: 4,
+      bypassSslMitm10: 1,
+      aiRiskMonitoringMessage: "keep me",
+      enableGroupAssociation: 0,
+      dlpPolicyMethod: 2,
+    });
     const { next } = mergeResourcePolicySettings(current, { aiRiskEnabled: 1 });
+
     expect(next.aiRiskEnabled).toBe(1);
+    for (const key of Object.keys(current)) {
+      if (key === "aiRiskEnabled") continue;
+      expect(next[key], key).toEqual(current[key]);
+    }
+    expect(hasFieldFamily(next, "cat")).toBe(true);
+    expect(hasFieldFamily(next, "prio")).toBe(true);
+    expect(hasFieldFamily(next, "bypassSslMitm")).toBe(true);
+    expect(next.cat7).toBe(9);
+    expect(next.prio3).toBe(4);
+    expect(next.bypassSslMitm10).toBe(1);
     expect(next.showPACUrl).toBe(1);
+    expect(next.aiRiskMonitoringMessage).toBe("keep me");
+    for (let i = 0; i <= POLICY_FIELD_FAMILY_MAX; i++) {
+      expect(next[`cat${i}`]).toBeDefined();
+      expect(next[`prio${i}`]).toBeDefined();
+      expect(next[`bypassSslMitm${i}`]).toBeDefined();
+    }
+  });
+
+  it("fills only family members the GET lacked so Gateway POST cannot default them", () => {
+    const { next } = mergeResourcePolicySettings(
+      { customCategoryId: 1, isZeroTrustResourcePolicy: 1, cat7: 9 },
+      { linkPolicyToAllSubjects: true },
+    );
     expect(next.cat7).toBe(9);
     expect(next.cat0).toBe(3);
     expect(next.cat110).toBe(3);
-    expect(next.prio55).toBe(0);
-    expect(next.bypassSslMitm110).toBe(0);
-    expect(next.dlpPolicyMethod).toBe(2);
-  });
-
-  it("injects missing catN / prioN / bypassSslMitmN families", () => {
-    const { next } = mergeResourcePolicySettings(
-      { customCategoryId: 1, isZeroTrustResourcePolicy: 1 },
-      { linkPolicyToAllSubjects: true },
-    );
-    expect(next.cat0).toBe(3);
-    expect(next.cat110).toBe(3);
-    expect(next.prio0).toBe(0);
-    expect(next.bypassSslMitm110).toBe(0);
+    expect(hasFieldFamily(next, "cat")).toBe(true);
+    expect(hasFieldFamily(next, "prio")).toBe(true);
+    expect(hasFieldFamily(next, "bypassSslMitm")).toBe(true);
     expect(typeof next.categories).toBe("string");
     expect((next.categories as string).length).toBe(400);
     expect(next.linkPolicyToAllSubjects).toBe(1);
     expect(next.dlpPolicyMethod).toBe(2);
+  });
+
+  it("does not overwrite a prior dlpPolicyMethod when the patch omits it", () => {
+    const { next } = mergeResourcePolicySettings(currentSettings({ dlpPolicyMethod: 1 }), {
+      aiRiskEnabled: 1,
+    });
+    expect(next.dlpPolicyMethod).toBe(1);
   });
 
   it("encodes destinations without the agent sending a bitmap", () => {
@@ -89,13 +120,12 @@ describe("mergeResourcePolicySettings (DEVELOP-34914)", () => {
     expect(next.aiRiskEnabled).toBe(1);
   });
 
-  it("skips family injection in advanced mode", () => {
-    const { next } = mergeResourcePolicySettings(
-      { customCategoryId: 1, isZeroTrustResourcePolicy: 1 },
-      { aiRiskEnabled: 1, advanced: true },
-    );
-    expect(next.cat0).toBeUndefined();
+  it("still round-trips families when advanced is set (no native Gateway PATCH)", () => {
+    const current = currentSettings({ cat7: 9 });
+    const { next } = mergeResourcePolicySettings(current, { aiRiskEnabled: 1, advanced: true });
     expect(next.aiRiskEnabled).toBe(1);
+    expect(next.cat7).toBe(9);
+    expect(hasFieldFamily(next, "cat")).toBe(true);
   });
 
   it("validates aiRiskEngines before POST", () => {

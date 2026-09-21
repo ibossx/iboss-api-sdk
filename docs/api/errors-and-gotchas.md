@@ -44,8 +44,10 @@ no reporting cluster provisioned).
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),
   `prio0..prio110` (=0), `bypassSslMitm0..bypassSslMitm110` (=0), and a
   400-char `categories` bitmap. Helpers: `generateCategoryFields()` etc.
-  Agents should use `patchResourcePolicySettings` so they never send those
-  families by hand.
+  Gateway POST **defaults omitted fields** (DEVELOP-34251 / DEVELOP-32482) —
+  never POST a partial settings blob. `patchResourcePolicySettings` GETs
+  the full object, deep-merges, and POSTs the complete merge. There is no
+  native Gateway PATCH. TOCTOU on that GET→POST is accepted for agent v1.
 - **AI Services destination** is bit **110** of the bitmap plus
   `categoriesSelectedType: 0` (Selected Destinations — inverted enum). Use
   `ensureAiSecurityDestination` / `setDestination`. Allowlist recreate
