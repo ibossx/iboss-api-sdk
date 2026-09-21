@@ -43,6 +43,8 @@ export {
   IbossHostUnavailableError,
   IbossNotConnectedError,
   IbossNetworkError,
+  IbossVerifyError,
+  IbossPolicyTypeError,
   type HttpMethod,
 } from "./client/errors.js";
 
@@ -62,7 +64,21 @@ export {
   type PolicyLayer,
   type PolicyLayerType,
   type CreateLayerResult,
+  type CreateResourcePolicyParams,
+  type CreateResourcePolicyResult,
 } from "./api/policies.js";
+export {
+  AI_SERVICES_BIT,
+  CATEGORIES_SELECTED_TYPE,
+  WEB_CATEGORY_BITS,
+  aiServicesDestination,
+  decodeDestinations,
+  encodeDestinationBits,
+  type DestinationSpec,
+  type ResourcePolicyDestinations,
+  type WebCategory,
+} from "./api/destinations.js";
+export type { ResourcePolicySettingsPatch } from "./api/resourcePolicyCreate.js";
 export type { PacZone, PrivateNetwork } from "./api/locations.js";
 export type { ZeroTrustResource, ListResourcesOptions } from "./api/resources.js";
 export type { FirewallRule } from "./api/firewall.js";

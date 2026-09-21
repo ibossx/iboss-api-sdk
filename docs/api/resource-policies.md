@@ -39,6 +39,41 @@ same endpoints but have `isZeroTrustResourcePolicy: 0`.)
 
 `client.policies.createLayer({ isZeroTrustResourcePolicy: 1, ... })` performs
 both steps and injects `dlpPolicyMethod: 2` and the field families for you.
+It still returns **ids only**. Trusting the settings POST 200 (or empty
+`saveIgnoredEntries`) is wrong — the write can succeed while destinations
+silently drop.
+
+## One-shot create + verify (DEVELOP-34926)
+
+Agent-facing equivalent of `POST …/resourcePolicies`. Internally still PUT
+policyLayers + POST settings; the method then **re-GETs** and returns
+effective settings (not ids / POST success).
+
+Composes the sibling purpose-named surfaces:
+
+- `destinations` — same body as `putResourcePolicyDestinations` (DEVELOP-34925)
+- `settings` — same sparse patch as `patchResourcePolicySettings` (DEVELOP-34924)
+
+```ts
+const policy = await client.policies.createResourcePolicy({
+  name: "AI Security",
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  settings: {
+    aiRiskEnabled: 1,
+    aiRiskEngines: "chatgpt",
+    linkPolicyToAllSubjects: 1,
+  },
+});
+// policy.destinations.categories === ["AI_SERVICES"]
+// policy.settings is the re-GET (families hidden by default)
+```
+
+Default `type` is `"categories"` so destinations are expressable. Allowlist
++ destinations throws `IbossPolicyTypeError` **before any write** (allowlist
+recreate silently drops the bitmap). CASB-style allowlist create omits
+destinations and passes `type: "allowlist"`.
+
+`createLayer` / `createLayerStructure` / `updateLayerSettings` are unchanged.
 
 ## Endpoints
 
@@ -46,7 +81,8 @@ both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 |---|---|
 | `GET /json/controls/resourcePolicies` | `listResourcePolicies()` |
 | `GET /json/controls/policyLayers/all?isZeroTrustLayer=1&...` | `listLayers({ isZeroTrustLayer: 1 })` |
-| create (two-step) | `createLayer({ isZeroTrustResourcePolicy: 1, ... })` |
+| create (two-step, ids only) | `createLayer({ isZeroTrustResourcePolicy: 1, ... })` |
+| create + verify (agent) | `createResourcePolicy({ name, destinations?, settings? })` |
 | `GET /json/controls/policyLayers/settings?customCategoryId=` | `getLayerSettings(id)` |
 | `POST /json/controls/policyLayers/settings` | `updateLayerSettings(...)` |
 | `DELETE /json/controls/policyLayers?customCategoryId=` | `deleteLayer(id)` |
@@ -79,7 +115,14 @@ Gotchas:
 - Association is a **PUT** with `customCategoryId` as a query param and the
   body field named **`resourceIds`** — both ids are required.
 - `dlpPolicyMethod: 2` is mandatory in every Resource Policy settings
-  payload; omitting it produces broken policies.
+  payload; omitting it produces broken policies. `createResourcePolicy`
+  always injects it.
+- **Do not trust POST success.** `createResourcePolicy` re-GETs and throws
+  `IbossVerifyError` if destinations or settings did not persist. Empty
+  `saveIgnoredEntries` is not proof.
+- Agents should not invent the 400-char `categories` bitmap or
+  `categoriesSelectedType`. Pass `destinations: { mode: "selectedWebCategories",
+  categories: ["AI_SERVICES"] }` (bit 110 + type 0).
 - CASB-control policies are allowlist-type Resource Policies with
   `enterpriseOwned: 1`.
 - Group-targeted policies: `linkPolicyToAllSubjects: 0` +

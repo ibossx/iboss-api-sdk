@@ -14,13 +14,41 @@
  * CRITICAL GOTCHA — policy creation is a TWO-STEP process:
  *   1. PUT  /json/controls/policyLayers          → returns customCategoryId + customCategoryNumber
  *   2. POST /json/controls/policyLayers/settings → applies the full settings payload
- * createLayer() wraps both steps; the raw steps are exposed as
- * createLayerStructure() and updateLayerSettings() for advanced use.
+ * createLayer() wraps both steps and still returns ids only. Agents creating
+ * Resource Policies should use createResourcePolicy() (DEVELOP-34926): same
+ * two-step internally, then re-GET so the response is effective settings.
+ * The raw steps stay exposed as createLayerStructure() and
+ * updateLayerSettings() for advanced use.
  *
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
- * (createLayer adds it when isZeroTrustResourcePolicy: 1).
+ * (createLayer / createResourcePolicy add it when isZeroTrustResourcePolicy: 1).
  */
+import { IbossVerifyError } from "../client/errors.js";
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
+import {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
+import {
+  buildCreateResourcePolicySettings,
+  collectCreateVerifyFailures,
+  resolveCreateSettingsPatch,
+  RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+  viewCreatedResourcePolicy,
+  type CreateResourcePolicyParams,
+  type CreateResourcePolicyResult,
+} from "./resourcePolicyCreate.js";
+
+export {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
+
+export type { CreateResourcePolicyParams, CreateResourcePolicyResult } from "./resourcePolicyCreate.js";
 
 export type PolicyLayerType = "blocklist" | "allowlist" | "categories";
 
@@ -52,32 +80,6 @@ export interface CreateLayerResult {
 export interface PolicyLayerUrl {
   url: string;
   [key: string]: unknown;
-}
-
-/** Fields cat0..cat110 = 3 (category action defaults). */
-export function generateCategoryFields(value = 3): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`cat${i}`] = value;
-  return fields;
-}
-
-/** Fields prio0..prio110 = 0. */
-export function generatePriorityFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`prio${i}`] = value;
-  return fields;
-}
-
-/** Fields bypassSslMitm0..bypassSslMitm110 = 0. */
-export function generateBypassSslMitmFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`bypassSslMitm${i}`] = value;
-  return fields;
-}
-
-/** The 400-character all-zeros categories bitmap used in settings payloads. */
-export function emptyCategoriesBitmap(): string {
-  return "0".repeat(400);
 }
 
 export class PoliciesApi extends SubClient {
@@ -211,6 +213,87 @@ export class PoliciesApi extends SubClient {
     };
     await this.updateLayerSettings(settings as Parameters<PoliciesApi["updateLayerSettings"]>[0]);
     return created;
+  }
+
+  /**
+   * One-shot Resource Policy create + verify (DEVELOP-34926).
+   *
+   * Agent-facing equivalent of `POST …/resourcePolicies`:
+   *
+   * ```ts
+   * const policy = await client.policies.createResourcePolicy({
+   *   name: "AI Security",
+   *   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+   *   settings: { aiRiskEnabled: 1, linkPolicyToAllSubjects: 1 },
+   * });
+   * // policy.settings is the re-GET (effective), not the POST 200 / ids
+   * ```
+   *
+   * Internally still PUT policyLayers + POST settings (legacy two-step). The
+   * method then re-GETs and throws `IbossVerifyError` if destinations or
+   * settings did not persist. Do not trust POST success or empty
+   * `saveIgnoredEntries`.
+   *
+   * Composes the sibling purpose-named surfaces: `destinations` is the
+   * DEVELOP-34925 body; `settings` is the DEVELOP-34924 sparse patch.
+   * `createLayer` is unchanged and still returns ids only.
+   *
+   * Default `type` is `"categories"` so destinations are expressable.
+   * Allowlist/blocklist + destinations throws `IbossPolicyTypeError` before
+   * any write (allowlist recreate silently drops the bitmap).
+   */
+  async createResourcePolicy(params: CreateResourcePolicyParams): Promise<CreateResourcePolicyResult> {
+    const type = params.type ?? "categories";
+    const settingsPatch = resolveCreateSettingsPatch(params);
+
+    // Reject before PUT so a doomed allowlist+destinations combo never creates
+    // a half-finished layer.
+    buildCreateResourcePolicySettings({
+      customCategoryId: 0,
+      customCategoryNumber: 0,
+      name: params.name,
+      type,
+      destinations: params.destinations,
+      settings: settingsPatch,
+    });
+
+    const created = await this.createLayerStructure({
+      name: params.name,
+      type,
+      isZeroTrustResourcePolicy: 1,
+      enterpriseOwned: params.enterpriseOwned,
+      placeAtPosition: params.placeAtPosition,
+    });
+
+    const { body, verify } = buildCreateResourcePolicySettings({
+      customCategoryId: created.customCategoryId,
+      customCategoryNumber: created.customCategoryNumber,
+      name: params.name,
+      type,
+      destinations: params.destinations,
+      settings: settingsPatch,
+    });
+
+    await this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
+      body,
+      signal: params.signal,
+    });
+
+    const persisted = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+      { query: { customCategoryId: created.customCategoryId }, signal: params.signal },
+    );
+    const failures = collectCreateVerifyFailures(persisted, verify);
+    if (failures.length > 0) {
+      throw new IbossVerifyError(
+        `Resource policy ${created.customCategoryId} create POST reported success but GET did not persist: ` +
+          `${failures.join("; ")}. Do not trust POST success or empty saveIgnoredEntries.`,
+        { customCategoryId: created.customCategoryId, failures, actual: persisted },
+      );
+    }
+    return viewCreatedResourcePolicy(persisted, params.view ?? "summary");
   }
 
   async deleteLayer(customCategoryId: number): Promise<SuccessResponse> {

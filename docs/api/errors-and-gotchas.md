@@ -10,6 +10,8 @@
 | 404 | `IbossApiError` | Wrong path or wrong **host tier** | Confirm the tier: `/json/...`→gateway, `/ibcloud/web/...`→cloud, `/ibreports/...`→reporter |
 | 422 | `IbossSubscriptionError` | Account lacks the module's subscription, or payload shape invalid | Check `session.account.subscriptionFlags`; for DLP/ZTNA treat as an expected skip |
 | 5xx / network | retried, then `IbossApiError` / `IbossNetworkError` | Transient platform/network issue | The SDK already retried (idempotent methods) |
+| (2xx then mismatch) | `IbossVerifyError` | POST/PUT succeeded but re-GET did not persist intended fields | Do not treat POST 200 as done; inspect `failures` |
+| (pre-write) | `IbossPolicyTypeError` | Destinations cannot be expressed on allowlist/blocklist | Recreate as categories-type; do not patch the bitmap |
 
 All API errors carry `method`, `url`, `status`, and a truncated response
 `body` for diagnostics.
@@ -36,7 +38,10 @@ no reporting cluster provisioned).
   `PUT /json/controls/policyLayers` (structure) then
   `POST /json/controls/policyLayers/settings` (full settings). A policy
   created without the settings step is incomplete. Use
-  `client.policies.createLayer()` which does both.
+  `client.policies.createLayer()` which does both (returns ids). For
+  Resource Policies, prefer `createResourcePolicy()` — same two-step, then
+  re-GET; throws `IbossVerifyError` if the write did not persist. Do not
+  trust POST 200 or empty `saveIgnoredEntries`.
 - **`dlpPolicyMethod: 2` is mandatory** in every *Resource Policy* settings
   payload. `createLayer({ isZeroTrustResourcePolicy: 1 })` adds it.
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),

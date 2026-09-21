@@ -85,10 +85,17 @@ examples/                  small runnable library scripts
   (`/ibcloud/web/...`), gateway node (`/json/...`), reporter node
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
-  `client.policies.createLayer()` wraps it — don't hand-roll it.
+  `client.policies.createLayer()` wraps it and returns ids — don't
+  hand-roll it. For Resource Policies, agents should use
+  `createResourcePolicy({ name, destinations?, settings? })` (DEVELOP-34926):
+  same PUT + POST internally, then re-GET of **effective** settings.
+  Trusting POST success alone is wrong (`IbossVerifyError`). `destinations`
+  matches DEVELOP-34925; `settings` matches DEVELOP-34924 sparse patch.
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
-  lacks the module; check `ctx.account.subscriptionFlags`). See
+  lacks the module; check `ctx.account.subscriptionFlags`),
+  `IbossVerifyError` (write reported success but re-GET did not persist),
+  `IbossPolicyTypeError` (allowlist/blocklist + destinations). See
   [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
 - **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)`.
   To wrap a new endpoint properly, follow the `add-api-client` skill.

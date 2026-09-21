@@ -155,13 +155,20 @@ const layers = await client.policies.listLayers();
 const groups = await client.groups.listFilteringGroups();
 const zones  = await client.locations.listPacZones();
 
-// Two-step policy creation wrapped in one call:
+// Two-step policy creation wrapped in one call (returns ids):
 const layer = await client.policies.createLayer({
   name: "Global Blocklist",
   type: "blocklist",
   settings: { policyAction: 0 },        // block
 });
 await client.policies.addLayerUrl(layer.customCategoryId, "blocked.example.com");
+
+// Resource Policy one-shot create + verify (returns effective re-GET settings):
+const policy = await client.policies.createResourcePolicy({
+  name: "AI Security",
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  settings: { aiRiskEnabled: 1 },
+});
 
 // Escape hatch for endpoints without a wrapper (still gets auth, cookies, XSRF, retries):
 const raw = await client.raw("gateway", "GET", "/json/controls/confidenceScores");
