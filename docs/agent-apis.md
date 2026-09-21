@@ -10,12 +10,19 @@ This document inventories how the iboss API SDK is laid out and consumed,
 names the APIs that are painful for agents, and proposes **non-breaking**
 remedies. Existing wire APIs stay as they are.
 
-**How to read this doc.** Section 2 is **confirmed** pain from Bug
-Replicator + AI Chat live testing. Those items outrank everything else
-and are the implementation queue. Section 4 is SDK inventory (how the
-repo works). Section 5 is additional inventory that looks agent-hostile
-but was **not** independently reproduced in that testing — useful, not
-the kickoff.
+**How to read this doc.**
+
+1. **§1 Product direction** is authoritative from the
+   [DEVELOP-34912](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34912)
+   epic description: a **dedicated Resource Policy read/update surface**
+   (today's settings GET is a Policy Layers URL) plus **UPDATE/patch**
+   that get-merge-posts so agents send only what changed.
+2. **§2 Confirmed findings** (Bug Replicator + AI Chat) are the live
+   footguns that surface must hide — typed destinations first. They
+   outrank inventory.
+3. **§5** is SDK inventory. **§6** is additional inventory that was
+   **not** independently reproduced in that testing — useful, not the
+   kickoff.
 
 Child tickets already filed under the epic:
 
@@ -51,10 +58,115 @@ SDK wrappers ship first and later become thin clients of a sibling path.
 
 ---
 
-## 1. Confirmed findings (Bug Replicator + AI Chat)
+## 1. Product direction (epic — authoritative)
 
-These were observed against live platform behavior. Prioritize them
-above the inventory in §5.
+Two requirements from the DEVELOP-34912 description. Treat them as
+the shape of the dedicated surface; §2 is why agents cannot use
+today's Policy Layers settings URL safely.
+
+### 1.1 Today: settings live on Policy Layers, not Resource Policies
+
+```
+GET https://{{gatewayNodeApiDomain}}/json/controls/policyLayers/settings
+    ?customCategoryId={{resource_policy_category}}
+```
+
+That is the **only** read for a Resource Policy's settings. The
+Resource Policy noun already exists for listing
+(`GET /json/controls/resourcePolicies` → `listResourcePolicies()`)
+and for associating catalog resources
+(`GET/PUT /json/controls/resourcePolicy/resources`). There is no
+dedicated get/settings/update on that noun. Agents (and the epic)
+must know that a Resource Policy *is* a Policy Layer id.
+
+**Design a dedicated Resource Policy surface. Keep every existing
+path working.**
+
+| Role | Today (unchanged) | Dedicated sibling (new) | SDK method (new; wrap sibling, fall back to today) |
+|---|---|---|---|
+| List | `GET /json/controls/resourcePolicies` | — (already the right noun) | keep `listResourcePolicies()`; add `listPolicies({ kind })` |
+| Read settings | `GET /json/controls/policyLayers/settings?customCategoryId=` | `GET /json/controls/resourcePolicies/settings?customCategoryId=` | `getResourcePolicySettings(id, { view? })` |
+| Replace settings | `POST /json/controls/policyLayers/settings` (full blob) | `POST /json/controls/resourcePolicies/settings` (alias; same full-echo contract) | keep `updateLayerSettings`; do **not** point agents here |
+| **Patch / UPDATE** | *does not exist* | `POST /json/controls/resourcePolicies/settings/patch` (or `PATCH` on the same resource) | `patchResourcePolicySettings(id, patch)` |
+| Create | `PUT /json/controls/policyLayers` + POST settings | optional `PUT /json/controls/resourcePolicies` (both steps) | `createResourcePolicy({…})` → returns GET settings |
+| Destinations | fields on the settings blob | `POST /json/controls/resourcePolicies/settings/destinations` | `setDestination` / `ensureAiSecurityDestination` |
+
+Sibling paths follow existing `/json/controls/…` naming. They are
+additive. Gateway handlers may internally call the Policy Layers
+settings endpoints; agents never have to.
+
+Until siblings exist, **SDK methods implement the same contracts
+against today's paths** so this repo can ship the agent surface
+without a platform release.
+
+### 1.2 UPDATE / patch: get → merge → normal POST
+
+Epic text: *Add UPDATE support to existing APIs which then pushes
+only what is changed, which pulls the existing JSON, combines with
+the patched, and sends it to the normal POST call.*
+
+This is the remedy for the `cat0..cat110` / `prio0..prio110` /
+`bypassSslMitm0..bypassSslMitm110` round-trip (confirmed in §2.B).
+Agents send **only the fields they intend to change**. The
+implementation — SDK first, gateway sibling later — does:
+
+```
+1. GET  /json/controls/policyLayers/settings?customCategoryId=<id>
+        (or the dedicated GET once it exists)
+2. current = parsed JSON
+3. next    = deepMerge(current, patch)
+             + inject generateCategoryFields() / generatePriorityFields()
+               / generateBypassSslMitmFields() / categories bitmap
+               unless patch.advanced === true
+             + if this is a Resource Policy: dlpPolicyMethod = 2
+               unless the patch explicitly sets it
+             + if patch.destinations is set: encode bitmap +
+               categoriesSelectedType (see §2.A); never require the
+               agent to send `categories` / cat* / prio* / bypass*
+4. POST /json/controls/policyLayers/settings   body = next
+        (or POST …/resourcePolicies/settings — same contract)
+5. GET  again. If destinations / dlpPolicyMethod / aiRisk* did not
+   persist, throw — do not treat POST success or empty
+   saveIgnoredEntries as proof (confirmed in testing).
+6. Return the GET body (summary view by default).
+```
+
+`updateLayerSettings(fullBlob)` stays a full replace. New code
+paths are additive: `patchResourcePolicySettings` and the
+`…/settings/patch` sibling.
+
+```ts
+// Agent sends only what changed. Families and dlpPolicyMethod: 2
+// are filled in. Existing unrelated fields are preserved.
+await client.policies.patchResourcePolicySettings(customCategoryId, {
+  aiRiskEnabled: 1,
+  aiRiskEngines: "all",
+  linkPolicyToAllSubjects: 1,
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  monitoringMessage: "AI use is monitored.",
+});
+```
+
+Same merge algorithm on the gateway for
+`POST /json/controls/resourcePolicies/settings/patch` so raw HTTP
+agents (`npx iboss api`) get the same safety.
+
+### 1.3 Typed destinations sit on that surface
+
+Do not invent a second write path for bitmaps. `setDestination` /
+`ensureAiSecurityDestination` are thin callers of
+`patchResourcePolicySettings` that only supply `destinations`.
+The merge step encodes bit 110 / `categoriesSelectedType: 0` and
+re-GETs. Reject allowlist+categories (wrong `customType`; delete
+and recreate — §3 recipe).
+
+---
+
+## 2. Confirmed findings (Bug Replicator + AI Chat)
+
+These were observed against live platform behavior. They specify
+what the §1 surface must hide. Prioritize them above the inventory
+in §6.
 
 ### A. Policy destination encoding — highest priority
 
@@ -96,8 +208,10 @@ client.policies.ensureAiSecurityDestination(id);
 ```
 
 - `setDestination` / `ensureAiSecurityDestination`: **SDK wrapper**.
-  GET settings → encode bitmap + `categoriesSelectedType: 0` → merge-POST
-  → re-GET and throw if bit 110 / type did not stick.
+  Thin callers of `patchResourcePolicySettings` (§1.2 get-merge-post)
+  that only supply `destinations`. The merge encodes the bitmap +
+  `categoriesSelectedType: 0`, POSTs the full settings blob, re-GETs,
+  and throws if bit 110 / type did not stick.
 - Reject (or hard-warn) `allowlist`/`blocklist` + categories. Those are
   a different `customType`; the working recipe deletes the wrong-type
   layer and recreates as `e_custom_category_type_categories`.
@@ -129,32 +243,36 @@ client.policies.ensureAiSecurityDestination(id);
 - Combined with A: even a "successful" POST (`saveIgnoredEntries` empty)
   is not proof the fields persisted.
 
-**Proposed shapes.**
+**Proposed shapes** — these *are* the §1 dedicated surface / UPDATE.
 
 ```ts
-// Only AI Security knobs. SDK GET-merges, injects generated families
-// unless advanced: true, forces dlpPolicyMethod: 2, then re-GETs.
+// Dedicated read (not policyLayers/settings in the agent-facing API).
+client.policies.getResourcePolicySettings(id, { view: "summary" | "full" });
+// summary: id, name, kind, enabled, destinations[], aiRisk, groups
+// full: wire blob (same as getLayerSettings)
+
+// Epic UPDATE: agent sends only what changed. Implementation
+// GET-merges, injects families unless advanced: true, forces
+// dlpPolicyMethod: 2, POSTs the normal settings body, re-GETs.
 client.policies.patchResourcePolicySettings(id, {
   aiRiskEnabled: 1,
   aiRiskEngines: "all",          // see G
   linkPolicyToAllSubjects: 1,
   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
-  monitoringMessage: "…",        // block/monitor page text
+  monitoringMessage: "…",
 });
-
-client.policies.getResourcePolicySettings(id, { view: "summary" | "full" });
-// summary: id, name, kind, enabled, destinations[], aiRisk, groups
-// full: wire blob (same as getLayerSettings)
 ```
 
 - `getResourcePolicySettings` / `patchResourcePolicySettings`:
-  **SDK wrapper** over today's GET/POST settings. `createLayer` already
-  injects families on **create**; this is the missing **update** path.
-- **New HTTP sibling (later):**
+  **SDK wrapper** implementing §1.2 against today's
+  `GET/POST /json/controls/policyLayers/settings`. `createLayer`
+  already injects families on **create**; this is the missing
+  **update**. `updateLayerSettings` stays full-replace.
+- **New HTTP sibling (epic's dedicated API):**
   `GET /json/controls/resourcePolicies/settings?customCategoryId=`
-  (dedicated noun — the epic's ask) and
-  `POST /json/controls/resourcePolicies/settings/patch` that
-  get-merge-posts **on the gateway**. Do not change
+  and `POST /json/controls/resourcePolicies/settings/patch` that
+  get-merge-posts **on the gateway**. Optional full-echo alias
+  `POST /json/controls/resourcePolicies/settings`. Do not change
   `/json/controls/policyLayers/settings`.
 - **Docs-only now:** "POST settings is full-echo; `dlpPolicyMethod: 2`
   is mandatory; re-GET after POST."
@@ -366,12 +484,13 @@ aiRiskEngines: "all" | AiRiskEngine[];
 
 ---
 
-## 2. Working recipe (migration / example)
+## 3. Working recipe (migration / example)
 
 This is the sequence agents eventually used to get an AI Security
 Resource Policy that **actually persisted**. Document it so raw-HTTP
 and old-path callers can succeed. **Do not change these paths.**
-New wrappers in §1 implement this ritual so agents stop performing it
+The §1 surface (`createResourcePolicy`, `patchResourcePolicySettings`,
+`setDestination`) implements this ritual so agents stop performing it
 by hand.
 
 1. **DELETE** the existing AI Security layer if it has the wrong
@@ -399,23 +518,24 @@ remain for callers who still want the raw two-step.
 
 ---
 
-## 3. Remedy map (confirmed items)
+## 4. Remedy map (confirmed items + epic surface)
 
 | Item | Additive SDK wrapper | New HTTP sibling (optional) | Docs-only |
 |---|---|---|---|
 | **A** destinations | `setDestination`, `ensureAiSecurityDestination` | `POST …/resourcePolicies/settings/destinations` | bit 110, inverted enum, re-GET |
-| **B** settings blob | `getResourcePolicySettings`, `patchResourcePolicySettings` (inject families; AI knobs only) | `GET …/resourcePolicies/settings`, `POST …/settings/patch` | full-echo + `dlpPolicyMethod: 2` |
+| **Epic + B** dedicated read + UPDATE | `getResourcePolicySettings`, `patchResourcePolicySettings` (get-merge-post; inject families; agents send only the patch) | `GET …/resourcePolicies/settings`, `POST …/settings/patch` | full-echo + `dlpPolicyMethod: 2` |
 | **C** two-step create | `createResourcePolicy` → returns GET settings | `PUT …/resourcePolicies` (both steps) | never stop after PUT |
 | **D** lists | `listDlpPolicies`, `listAiSecurityPolicies`, `listPolicies({ kind })` | `GET …/resourcePolicies?kind=` | `typeFilter=9`, `customType` table |
 | **E** conversations | `listAiConversations`, `getConversation`, `waitForConversation` | `GET /ibreports/web/aiConversations` + `/{id}` | ~15m lag, null list bodies, redact |
 | **F** auth / hosts | `fromEnv`, `fromProfile`, `raw()` tier inference | — | three-tier + `User-Agent: ibossAPI` |
 | **G** engines | `aiRiskEngines: "all" \| string[]` validated | — | observed slug `"chatgpt"` |
 
-Existing paths and SDK symbols in the left-hand column of §1 stay.
+Existing Policy Layers settings paths and SDK symbols stay. The
+dedicated Resource Policy noun is additive (§1).
 
 ---
 
-## 4. SDK inventory
+## 5. SDK inventory
 
 ### What this repo is
 
@@ -515,7 +635,7 @@ verify-after-write, and unwrapped reporter Governance — not transport.
 
 ---
 
-## 5. Additional inventory (not confirmed in that test pass)
+## 6. Additional inventory (not confirmed in that test pass)
 
 Useful, lower priority than A–G. Do not start here.
 
@@ -589,11 +709,30 @@ XSRF/session (`IbossApiError`, not `IbossXsrfError`). Do not reclassify
 
 ---
 
-## 6. Proposed agent surface (additive)
+## 7. Proposed agent surface (additive)
 
-All names are new. Old symbols remain. Confirmed items first.
+All names are new. Old symbols remain. Dedicated Resource Policy
+read/UPDATE first (epic), then destinations (confirmed), then the rest.
 
 ```ts
+// Epic — dedicated Resource Policy noun (not policyLayers/settings)
+client.policies.getResourcePolicySettings(id, { view?: "summary" | "full" })
+client.policies.patchResourcePolicySettings(id, patch)
+// patch = only changed fields. Implementation: GET → merge → POST
+// today's /json/controls/policyLayers/settings (or the sibling).
+client.policies.createResourcePolicy({
+  name,
+  destinations,
+  aiRiskEnabled,
+  aiRiskEngines,          // G: "all" | string[]
+  linkPolicyToAllSubjects,
+  monitoringMessage,
+}) // PUT + POST + re-GET; returns effective settings
+
+// A — destinations; implemented as a patch of { destinations }
+client.policies.setDestination(id, { mode: "selectedWebCategories", categories: ["AI_SERVICES"] })
+client.policies.ensureAiSecurityDestination(id)
+
 // F — construction
 IbossClient.fromEnv()
 IbossClient.fromProfile(name?: string)
@@ -602,22 +741,6 @@ IbossClient.fromProfile(name?: string)
 client.policies.listDlpPolicies()
 client.policies.listAiSecurityPolicies()
 client.policies.listPolicies({ kind: "dlp" | "aiSecurity" | … })
-
-// C + B — Resource Policy as its own noun
-client.policies.createResourcePolicy({
-  name,
-  destinations,
-  aiRiskEnabled,
-  aiRiskEngines,          // G: "all" | string[]
-  linkPolicyToAllSubjects,
-  monitoringMessage,
-})
-client.policies.getResourcePolicySettings(id, { view?: "summary" | "full" })
-client.policies.patchResourcePolicySettings(id, { /* AI knobs only */ })
-
-// A — destinations without a bitmap
-client.policies.setDestination(id, { mode: "selectedWebCategories", categories: ["AI_SERVICES"] })
-client.policies.ensureAiSecurityDestination(id)
 
 // E — conversations (reporter)
 client.reporting.listAiConversations({ since, until, vendor, textContains })
@@ -643,12 +766,12 @@ Until those exist, SDK methods call today's paths
 
 ---
 
-## 7. What we will not do in follow-up slices
+## 8. What we will not do in follow-up slices
 
 - Rename or remove `getLayerSettings`, `updateLayerSettings`,
   `createLayer`, `listLayers`, `listResourcePolicies`, `createPeer`,
   `associateResources`, or any existing path.
-- Change the working-recipe paths in §2 — wrappers hide them; they stay.
+- Change the working-recipe paths in §3 — wrappers hide them; they stay.
 - Require OpenAPI generation as a blocker.
 - Put API keys in chat, docs, tests, or examples (placeholders only).
 - Change 403-on-GET from `IbossApiError` to `IbossXsrfError`.
@@ -658,22 +781,25 @@ Until those exist, SDK methods call today's paths
 
 ---
 
-## 8. Next implementation slices
+## 9. Next implementation slices
 
-Kickoff order is the **confirmed** list. Each slice is independently
-mergeable and non-breaking.
+Kickoff order is the **epic surface** plus the confirmed destination
+footgun. Each slice is independently mergeable and non-breaking.
 
-1. **A — Typed destinations** (DEVELOP-34916) —
-   category name ↔ bit index (110 = AI Services),
+1. **Dedicated Resource Policy read + UPDATE** (epic + DEVELOP-34914) —
+   `getResourcePolicySettings` (dedicated noun; fall back to
+   `GET /json/controls/policyLayers/settings?customCategoryId=`),
+   `patchResourcePolicySettings` (get-merge-post → normal POST; inject
+   `cat*`/`prio*`/`bypassSslMitm*`; `dlpPolicyMethod: 2`),
+   `createResourcePolicy` that returns effective GET settings.
+   Mock-server: a partial patch cannot drop `cat*` / bitmap;
+   POST-success-without-persist is a test case. Platform siblings
+   (`GET/POST …/resourcePolicies/settings`, `…/settings/patch`) can
+   land in parallel (try sibling, fall back).
+2. **A — Typed destinations** (DEVELOP-34916) — built **on** the
+   patch helper: category name ↔ bit index (110 = AI Services),
    `setDestination` / `ensureAiSecurityDestination`, reject
-   allowlist+categories, re-GET assert. This is the highest-leverage
-   hide-the-footgun.
-2. **B + C — Resource Policy get / patch / create** (DEVELOP-34914) —
-   `getResourcePolicySettings`, `patchResourcePolicySettings` (AI knobs
-   only; inject families; `dlpPolicyMethod: 2`), `createResourcePolicy`
-   that returns effective GET settings. Mock-server: a partial patch
-   cannot drop `cat*` / bitmap; POST-success-without-persist is a test
-   case. Platform siblings can land in parallel (try sibling, fall back).
+   allowlist+categories, re-GET assert.
 3. **D — Friendly lists** (DEVELOP-34915) —
    `listDlpPolicies` (`typeFilter=9`), `listAiSecurityPolicies`,
    `listPolicies({ kind })`.
@@ -685,21 +811,26 @@ mergeable and non-breaking.
 5. **F + G — Client defaults + engines** (DEVELOP-34913) —
    `fromEnv` / `fromProfile`, `raw()` tier inference, validated
    `aiRiskEngines: "all" | string[]`. Small; can ship beside 1–2.
-6. **Inventory follow-ups** (§5) — PAC / proxy / SSL / groups patch
+6. **Inventory follow-ups** (§6) — PAC / proxy / SSL / groups patch
    pairs, `attachResources`, reporting `reportId` resolution. After A–G.
 7. **Docs pass** — "Agent quick path" on `resource-policies.md`,
    `policy-layers.md`, `reporting-and-logs.md`, `errors-and-gotchas.md`
-   once symbols exist. This PR is the proposal + the §2 recipe.
+   once symbols exist. This PR is the proposal + the §3 recipe.
 
-Recommended first **code** PR: **slice 1** (destinations) + the
-create/patch pieces of **slice 2** that destinations need to persist,
-with tests that re-GET after POST and that allowlist+categories is
-rejected. Slice 5 is a cheap companion if agents will live-test.
+Recommended first **code** PR: **slice 1** (dedicated get +
+get-merge-post UPDATE) with **slice 2** destinations on top, tests
+that a `{ aiRiskEnabled: 1 }` patch cannot drop `cat*` / bitmap and
+that allowlist+categories is rejected. Slice 5 is a cheap companion
+if agents will live-test.
 
 ---
 
-## 9. Sources
+## 10. Sources
 
+- **Epic (authoritative):** DEVELOP-34912 description — settings are
+  fetched via `GET /json/controls/policyLayers/settings?customCategoryId=`
+  instead of a dedicated Resource Policy API; add UPDATE that pulls
+  existing JSON, merges the patch, and sends the normal POST.
 - **Confirmed:** Bug Replicator + AI Chat testing folded into
   DEVELOP-34912 (comment) and children 34913–34916. Destination bitmap,
   inverted `categoriesSelectedType`, string-vs-numeric `customType`,
