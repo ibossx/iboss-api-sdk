@@ -25,8 +25,10 @@ gotchas.
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
 
 Cross-cutting proposal (discovery only; no runtime changes yet):
-[Agent-friendly APIs](../agent-apis.md) — inventory, agent-hostile
-endpoints, and non-breaking remedies for [DEVELOP-34912](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34912).
+[Agent-friendly APIs](../agent-apis.md) — confirmed Bug Replicator /
+AI Chat footguns (destinations, settings patch, lists, conversations)
+plus inventory and non-breaking remedies for
+[DEVELOP-34912](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34912).
 
 ## The four policy types (they look similar on the wire)
 
