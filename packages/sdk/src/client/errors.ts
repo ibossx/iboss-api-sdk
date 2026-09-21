@@ -103,3 +103,19 @@ export class IbossNetworkError extends IbossError {
     this.cause = cause;
   }
 }
+
+/**
+ * A mutating call returned success but a follow-up GET did not persist the
+ * intended fields. Common for settings POSTs whose `successful: true` /
+ * empty `saveIgnoredEntries` is not persistence.
+ */
+export class IbossVerifyError extends IbossError {
+  readonly customCategoryId?: number;
+  readonly failures: string[];
+
+  constructor(message: string, opts: { customCategoryId?: number; failures: string[] }) {
+    super(message);
+    this.customCategoryId = opts.customCategoryId;
+    this.failures = opts.failures;
+  }
+}

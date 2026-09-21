@@ -19,8 +19,38 @@
  *
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
  * (createLayer adds it when isZeroTrustResourcePolicy: 1).
+ *
+ * Sparse settings updates (DEVELOP-34924): use getResourcePolicySettings /
+ * patchResourcePolicySettings. Those prefer native Gateway PATCH (34921)
+ * and fall back to get→merge→full POST (34914). Do not POST a partial
+ * blob via updateLayerSettings — omitted families are Gateway-defaulted.
  */
+import { IbossVerifyError } from "../client/errors.js";
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
+import {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
+import {
+  assertSparsePatch,
+  collectSparseVerifyFailures,
+  isNativePatchUnsupported,
+  mergeResourcePolicySettingsForFallback,
+  RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+  sparseSettingsBody,
+  viewResourcePolicySettings,
+  type ResourcePolicySettingsPatch,
+  type ResourcePolicySettingsTransport,
+} from "./resourcePolicySparse.js";
+
+export {
+  emptyCategoriesBitmap,
+  generateBypassSslMitmFields,
+  generateCategoryFields,
+  generatePriorityFields,
+} from "./policyFields.js";
 
 export type PolicyLayerType = "blocklist" | "allowlist" | "categories";
 
@@ -54,33 +84,14 @@ export interface PolicyLayerUrl {
   [key: string]: unknown;
 }
 
-/** Fields cat0..cat110 = 3 (category action defaults). */
-export function generateCategoryFields(value = 3): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`cat${i}`] = value;
-  return fields;
-}
-
-/** Fields prio0..prio110 = 0. */
-export function generatePriorityFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`prio${i}`] = value;
-  return fields;
-}
-
-/** Fields bypassSslMitm0..bypassSslMitm110 = 0. */
-export function generateBypassSslMitmFields(value = 0): Record<string, number> {
-  const fields: Record<string, number> = {};
-  for (let i = 0; i <= 110; i++) fields[`bypassSslMitm${i}`] = value;
-  return fields;
-}
-
-/** The 400-character all-zeros categories bitmap used in settings payloads. */
-export function emptyCategoriesBitmap(): string {
-  return "0".repeat(400);
-}
-
 export class PoliciesApi extends SubClient {
+  /**
+   * Cached after the first auto PATCH attempt. `false` means this gateway
+   * rejected PATCH (404/405) so later auto updates skip straight to the
+   * 34914 get→merge→POST fallback.
+   */
+  private nativeSettingsPatchSupported?: boolean;
+
   /**
    * List policy layers via the paginated `/all` endpoint (the platform's
    * actual listing mechanism — there is no single-page "all" response).
@@ -127,7 +138,7 @@ export class PoliciesApi extends SubClient {
 
   /** Read the full settings of one policy layer. */
   async getLayerSettings(customCategoryId: number): Promise<Record<string, unknown>> {
-    return this.request("gateway", "GET", "/json/controls/policyLayers/settings", {
+    return this.request("gateway", "GET", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
       query: { customCategoryId },
     });
   }
@@ -158,14 +169,19 @@ export class PoliciesApi extends SubClient {
     });
   }
 
-  /** Step 2 only: apply a full settings payload to an existing layer. */
+  /**
+   * Step 2 only: apply a **full** settings payload to an existing layer.
+   * This is a replace: omitted catN / prioN / bypassSslMitmN are
+   * Gateway-defaulted (wipe-on-omit). Agents must use
+   * `patchResourcePolicySettings` for one-field updates.
+   */
   async updateLayerSettings(settings: {
     customCategoryId: number;
     customCategoryNumber: number;
     customCategoryName: string;
     [key: string]: unknown;
   }): Promise<SuccessResponse> {
-    return this.request("gateway", "POST", "/json/controls/policyLayers/settings", {
+    return this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
       body: settings,
     });
   }
@@ -324,6 +340,139 @@ export class PoliciesApi extends SubClient {
         customCategoryNumber: params.customCategoryNumber,
         resourceIds: params.resourceIds,
       },
+    });
+  }
+
+  /**
+   * Purpose-named Resource Policy settings GET (DEVELOP-34924).
+   *
+   * Equivalent of `GET …/resourcePolicies/{id}/settings`. Wire today is
+   * `GET /json/controls/policyLayers/settings?customCategoryId=`.
+   *
+   * `view: "summary"` (default) hides catN / prioN / bypassSslMitmN and
+   * the 400-char `categories` bitmap so agents do not invent those
+   * families. `view: "full"` returns the wire blob.
+   */
+  async getResourcePolicySettings(
+    customCategoryId: number,
+    opts?: { view?: "summary" | "full"; signal?: AbortSignal },
+  ): Promise<Record<string, unknown>> {
+    const full = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    return viewResourcePolicySettings(full, opts?.view ?? "summary");
+  }
+
+  /**
+   * Purpose-named omit-safe Resource Policy settings PATCH (DEVELOP-34924).
+   *
+   * Equivalent of `PATCH …/resourcePolicies/{id}/settings`. Agents send
+   * only changed fields (`{ aiRiskEnabled: 1 }`); omitted keys — including
+   * every catN / prioN / bypassSslMitmN member — stay unchanged.
+   *
+   * Transport (`opts.transport`, default `auto`):
+   * 1. Native `PATCH` on the existing settings path (DEVELOP-34921).
+   * 2. If PATCH is 404/405, DEVELOP-34914 get→deep-merge→**full** POST
+   *    (families filled so Gateway POST cannot default omitted fields).
+   *
+   * POST `?merge=1` is available as `transport: "merge-post"` but is **not**
+   * used by `auto`: a pre-34921 gateway would ignore `merge` and wipe.
+   * `updateLayerSettings(fullBlob)` stays the caller-supplied full replace.
+   *
+   * Re-GETs after write. TOCTOU on the get-merge-post fallback is accepted
+   * for agent v1 (same as DEVELOP-34914).
+   */
+  async patchResourcePolicySettings(
+    customCategoryId: number,
+    patch: ResourcePolicySettingsPatch,
+    opts?: {
+      view?: "summary" | "full";
+      signal?: AbortSignal;
+      transport?: ResourcePolicySettingsTransport;
+    },
+  ): Promise<Record<string, unknown>> {
+    assertSparsePatch(patch);
+    const transport = opts?.transport ?? "auto";
+    const body = sparseSettingsBody(customCategoryId, patch);
+
+    if (transport === "native-patch") {
+      await this.request("gateway", "PATCH", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
+        query: { customCategoryId },
+        body,
+        signal: opts?.signal,
+      });
+    } else if (transport === "merge-post") {
+      await this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
+        query: { customCategoryId, merge: 1 },
+        body,
+        signal: opts?.signal,
+      });
+    } else if (transport === "get-merge-post") {
+      await this.patchViaGetMergePost(customCategoryId, patch, opts?.signal);
+    } else {
+      await this.patchAuto(customCategoryId, patch, body, opts?.signal);
+    }
+
+    const persisted = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+      { query: { customCategoryId }, signal: opts?.signal },
+    );
+    const failures = collectSparseVerifyFailures(persisted, patch);
+    if (failures.length > 0) {
+      throw new IbossVerifyError(
+        `Resource policy ${customCategoryId} write reported success but GET did not persist: ` +
+          `${failures.join("; ")}. Do not trust POST/PATCH success alone.`,
+        { customCategoryId, failures },
+      );
+    }
+    return viewResourcePolicySettings(persisted, opts?.view ?? "summary");
+  }
+
+  private async patchAuto(
+    customCategoryId: number,
+    patch: ResourcePolicySettingsPatch,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (this.nativeSettingsPatchSupported === false) {
+      await this.patchViaGetMergePost(customCategoryId, patch, signal);
+      return;
+    }
+    try {
+      await this.request("gateway", "PATCH", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
+        query: { customCategoryId },
+        body,
+        signal,
+      });
+      this.nativeSettingsPatchSupported = true;
+    } catch (error) {
+      if (!isNativePatchUnsupported(error)) throw error;
+      this.nativeSettingsPatchSupported = false;
+      await this.patchViaGetMergePost(customCategoryId, patch, signal);
+    }
+  }
+
+  /** DEVELOP-34914: GET → deep-merge → full POST (never a sparse replace). */
+  private async patchViaGetMergePost(
+    customCategoryId: number,
+    patch: ResourcePolicySettingsPatch,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const current = await this.request<Record<string, unknown>>(
+      "gateway",
+      "GET",
+      RESOURCE_POLICY_SETTINGS_WIRE_PATH,
+      { query: { customCategoryId }, signal },
+    );
+    const next = mergeResourcePolicySettingsForFallback(current, patch);
+    await this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
+      body: next,
+      signal,
     });
   }
 }

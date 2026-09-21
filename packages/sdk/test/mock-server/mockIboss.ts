@@ -20,19 +20,41 @@ import {
   type MockKeyScope,
 } from "./fixtures.js";
 
+export interface MockSettingsWrite {
+  method: string;
+  merge?: string;
+  body: Record<string, unknown>;
+}
+
 export interface MockState {
   /** Requests received, for assertions: "METHOD host/path". */
   requests: string[];
   /** Policy layers created via the two-step flow. */
   policyLayers: Array<Record<string, unknown>>;
-  /** Settings payloads applied to layers. */
+  /** Settings payloads applied to layers (body as sent). */
   layerSettings: Array<Record<string, unknown>>;
+  /** Latest stored settings by customCategoryId (what GET returns). */
+  settingsById: Record<number, Record<string, unknown>>;
+  /** Settings writes with verb + merge query (sparse PATCH tests). */
+  settingsWrites: MockSettingsWrite[];
   /** URLs added to layers. */
   layerUrls: Array<Record<string, unknown>>;
   /** Resource associations: query customCategoryId + body. */
   resourceAssociations: Array<{ customCategoryId: string; body: Record<string, unknown> }>;
   /** Force 5xx on the next N matching GETs of this path (transient-failure tests). */
   failNextGets: { path: string; remaining: number } | null;
+  /**
+   * When false, PATCH /policyLayers/settings returns 405 (pre-34921 gateway).
+   * Auto SDK path then falls back to get→merge→full POST.
+   */
+  nativeSettingsPatch: boolean;
+  /**
+   * When false, POST `?merge=1` is treated as a full replace (old gateway
+   * ignores the query). Used to prove why `auto` must not send merge-post.
+   */
+  nativeSettingsMergePost: boolean;
+  /** PATCH/merge-post succeeds but GET omits the patched keys. */
+  dropPatchFieldsOnRead: boolean;
   nextLayerId: number;
 }
 
@@ -41,11 +63,35 @@ export function createMockState(): MockState {
     requests: [],
     policyLayers: [],
     layerSettings: [],
+    settingsById: {},
+    settingsWrites: [],
     layerUrls: [],
     resourceAssociations: [],
     failNextGets: null,
+    nativeSettingsPatch: true,
+    nativeSettingsMergePost: true,
+    dropPatchFieldsOnRead: false,
     nextLayerId: 100,
   };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** RFC 7396 JSON Merge Patch (mirrors Gateway DEVELOP-34921). */
+function mergePatch(target: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete out[key];
+    } else if (isPlainObject(value) && isPlainObject(out[key])) {
+      out[key] = mergePatch(out[key] as Record<string, unknown>, value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 function cookieMap(header: string | undefined): Record<string, string> {
@@ -182,10 +228,52 @@ export function createMockIboss(state: MockState): Hono {
         state.policyLayers.push(layer);
         return c.json({ customCategoryId: id, customCategoryNumber: id + 1000, id, successful: true });
       });
+      gateway.get("/json/controls/policyLayers/settings", (c) => {
+        const id = Number(c.req.query("customCategoryId"));
+        if (!Number.isFinite(id)) return c.json({ message: "customCategoryId required" }, 400);
+        const layer = state.policyLayers.find((l) => l.customCategoryId === id);
+        const stored = state.settingsById[id];
+        if (!layer && !stored) return c.json({ message: "not found" }, 404);
+        const body: Record<string, unknown> = {
+          ...(layer ?? {}),
+          ...(stored ?? {}),
+          customCategoryId: id,
+        };
+        if (state.dropPatchFieldsOnRead) {
+          delete body.aiRiskEnabled;
+          delete body.aiRiskEngines;
+        }
+        return c.json(body);
+      });
+      const applySettingsWrite = (
+        method: string,
+        merge: string | undefined,
+        body: Record<string, unknown>,
+      ) => {
+        state.layerSettings.push(body);
+        state.settingsWrites.push({ method, merge, body });
+        const id = Number(body.customCategoryId);
+        const current = (Number.isFinite(id) ? state.settingsById[id] : undefined) ?? {};
+        const useMerge = method === "PATCH" || (method === "POST" && merge === "1");
+        const next = useMerge ? mergePatch(current, body) : { ...body };
+        if (Number.isFinite(id)) state.settingsById[id] = next;
+        return { successful: true };
+      };
+      gateway.patch("/json/controls/policyLayers/settings", async (c) => {
+        if (!state.nativeSettingsPatch) {
+          return c.json({ message: "Method Not Allowed" }, 405);
+        }
+        const body = await c.req.json<Record<string, unknown>>();
+        return c.json(applySettingsWrite("PATCH", c.req.query("merge"), body));
+      });
       gateway.post("/json/controls/policyLayers/settings", async (c) => {
         const body = await c.req.json<Record<string, unknown>>();
-        state.layerSettings.push(body);
-        return c.json({ successful: true });
+        const merge = c.req.query("merge");
+        if (merge === "1" && !state.nativeSettingsMergePost) {
+          // Pre-34921: ignore merge and full-replace (wipe-on-omit).
+          return c.json(applySettingsWrite("POST", undefined, body));
+        }
+        return c.json(applySettingsWrite("POST", merge, body));
       });
       gateway.get("/json/controls/policyLayers/urls", (c) => c.json({ entries: state.layerUrls }));
       gateway.put("/json/controls/policyLayers/urls", async (c) => {

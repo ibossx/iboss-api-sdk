@@ -42,6 +42,15 @@ no reporting cluster provisioned).
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),
   `prio0..prio110` (=0), `bypassSslMitm0..bypassSslMitm110` (=0), and a
   400-char `categories` bitmap. Helpers: `generateCategoryFields()` etc.
+  **Agents must not invent these for a one-field change.** Use
+  `patchResourcePolicySettings` (sparse PATCH / merge). A sparse plain
+  `POST /json/controls/policyLayers/settings` without `?merge=1` is
+  wipe-on-omit (DEVELOP-34251 / DEVELOP-32482).
+- **Native Gateway merge (DEVELOP-34921)** is `PATCH` (or POST `?merge=1`)
+  on the same settings path. `auto` uses PATCH then the DEVELOP-34914
+  get→merge→full POST fallback. It does **not** send `?merge=1` unless you
+  pass `transport: "merge-post"` — a pre-34921 gateway ignores `merge` and
+  replaces.
 - **Routed peer creation returns no UUID.** After
   `PUT /json/network/mobileClients/peer`, re-list peers and match on
   `locationUuids`/name; propagation can take seconds. Use

@@ -86,6 +86,13 @@ examples/                  small runnable library scripts
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
   `client.policies.createLayer()` wraps it — don't hand-roll it.
+- **Sparse Resource Policy settings** (DEVELOP-34924): use
+  `getResourcePolicySettings(id)` / `patchResourcePolicySettings(id, { field })`.
+  Agents send only changed fields. Never POST a partial settings blob via
+  `updateLayerSettings` — omitted `catN`/`prioN`/`bypassSslMitmN` wipe.
+  Wire is still `GET/PATCH /json/controls/policyLayers/settings?customCategoryId=`.
+  Auto prefers native Gateway PATCH (DEVELOP-34921); if 404/405, falls back
+  to get→merge→full POST (DEVELOP-34914).
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
   lacks the module; check `ctx.account.subscriptionFlags`). See

@@ -9,7 +9,7 @@ gotchas.
 |---|---|---|---|
 | [authentication.md](authentication.md) | (API keys: admin console key management) | — | API keys, connect()/discovery, rotation, password login |
 | [accounts-and-clusters.md](accounts-and-clusters.md) | Account settings, Cloud Health | `client.account` | accounts, key expiry/rotation, preferences, clusters/nodes |
-| [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association |
+| [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association; sparse GET/PATCH settings (`getResourcePolicySettings` / `patchResourcePolicySettings`) |
 | [private-access-policies.md](private-access-policies.md) | Secure Access Policies → Private Access Policies | `client.network`, `client.policies` | ZTNA: routed policies, routed peers, private access general settings |
 | [policy-layers.md](policy-layers.md) | Secure Access Policies → Policy Layers | `client.policies` | overlay policy layers linked to default policy groups |
 | [default-policy-groups.md](default-policy-groups.md) | Secure Access Policies → Default Policies | `client.groups`, `client.apps` | default policy groups (names, settings) and per-group web controls |
