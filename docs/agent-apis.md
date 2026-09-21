@@ -8,17 +8,23 @@ repo.
 
 This document inventories how the iboss API SDK is laid out and consumed,
 names the APIs that are painful for agents, and proposes **non-breaking**
-remedies (new sibling paths, split APIs, additive fields, or SDK wrapper
-helpers). Existing wire APIs stay as they are.
+remedies. Existing wire APIs stay as they are.
+
+**How to read this doc.** Section 2 is **confirmed** pain from Bug
+Replicator + AI Chat live testing. Those items outrank everything else
+and are the implementation queue. Section 4 is SDK inventory (how the
+repo works). Section 5 is additional inventory that looks agent-hostile
+but was **not** independently reproduced in that testing — useful, not
+the kickoff.
 
 Child tickets already filed under the epic:
 
-| Ticket | Slice |
+| Ticket | Confirmed item |
 |---|---|
-| [DEVELOP-34913](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34913) | Client defaults — auth, gateway/reporter routing, `aiRiskEngines` |
-| [DEVELOP-34914](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34914) | Resource-policy dedicated get + patch UPDATE |
-| [DEVELOP-34915](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34915) | Friendly list/query — DLP/AI policies + Governance conversations |
-| [DEVELOP-34916](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34916) | Typed destinations — hide `categories` bitmap / `categoriesSelectedType` |
+| [DEVELOP-34916](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34916) | A — typed destinations |
+| [DEVELOP-34914](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34914) | B + C — settings patch + one-shot create |
+| [DEVELOP-34915](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34915) | D + E — friendly lists + conversations |
+| [DEVELOP-34913](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34913) | F + G — client defaults + `aiRiskEngines` |
 
 ---
 
@@ -33,19 +39,383 @@ Child tickets already filed under the epic:
    `/ibcloud/web/…`, `/ibreports/web/…`). New endpoints should be siblings
    of the current ones, not a parallel namespace.
 
-Two layers of remedy are used throughout:
+Every remedy is tagged as one of:
 
-| Layer | When to use | Ships in |
+| Tag | Meaning | Ships in |
 |---|---|---|
-| **SDK wrapper** | The platform already has the data; agents just cannot assemble the ritual safely | this repo (`@iboss/sdk`) |
-| **New sibling path** | The existing path is the wrong noun, is overloaded, or cannot express a patch/filter without a giant blob | gateway / reporter / cloud, then wrapped here |
+| **SDK wrapper** | Compose today's paths so agents never touch the footgun | this repo (`@iboss/sdk`) |
+| **New HTTP sibling** | Optional new path; old path unchanged. Wrappers can fall back until it exists | gateway / reporter / cloud, then wrap here |
+| **Docs-only** | Record the ritual / lag / sentinels; no new method required to start | `docs/api/*`, this file |
 
-SDK wrappers can ship first and later become thin clients of a sibling
-path. That is the intended sequence.
+SDK wrappers ship first and later become thin clients of a sibling path.
 
 ---
 
-## 1. SDK inventory
+## 1. Confirmed findings (Bug Replicator + AI Chat)
+
+These were observed against live platform behavior. Prioritize them
+above the inventory in §5.
+
+### A. Policy destination encoding — highest priority
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing (DEVELOP-34916) |
+| **Paths** | `GET/PUT/POST /json/controls/resourcePolicies` · `PUT /json/controls/policyLayers` · `GET/POST /json/controls/policyLayers/settings?customCategoryId=` |
+| **SDK today** | `createLayer` / `getLayerSettings` / `updateLayerSettings` / `emptyCategoriesBitmap()` — generate the blob, do not interpret it |
+
+**Footguns (observed).**
+
+- Agents must invent a ~400-character `categories` bitmap and set
+  **bit 110** for AI Services. There is no named category API.
+- `categoriesSelectedType = 0` means **Selected Destinations**. `1` is
+  the other mode. Agents invert this constantly.
+- Create takes `customType: "e_custom_category_type_categories"`
+  (string). GET returns `customType: 3` (number). Equality checks
+  against the create string fail after a round-trip.
+- Recreating the policy as an **allowlist** (`e_custom_category_type_allowlist`)
+  **silently drops** the categories bitmap. The POST can still succeed.
+- POST can return success with empty `saveIgnoredEntries` while
+  destination / AI-risk fields **do not stick**. Do not trust POST
+  success; re-GET and assert bit 110 and `categoriesSelectedType === 0`.
+
+**Proposed shapes (never force an agent to touch the bitmap).**
+
+```ts
+type DestinationMode = "selectedWebCategories" | "allWebCategories";
+type WebCategory = "AI_SERVICES"; // extend as the catalog is published
+
+client.policies.setDestination(id, {
+  mode: "selectedWebCategories",
+  categories: ["AI_SERVICES"],
+});
+
+client.policies.ensureAiSecurityDestination(id);
+// ≡ setDestination(id, { mode: "selectedWebCategories", categories: ["AI_SERVICES"] })
+//   plus categoriesSelectedType: 0, and refuse if the layer is an allowlist/blocklist
+```
+
+- `setDestination` / `ensureAiSecurityDestination`: **SDK wrapper**.
+  GET settings → encode bitmap + `categoriesSelectedType: 0` → merge-POST
+  → re-GET and throw if bit 110 / type did not stick.
+- Reject (or hard-warn) `allowlist`/`blocklist` + categories. Those are
+  a different `customType`; the working recipe deletes the wrong-type
+  layer and recreates as `e_custom_category_type_categories`.
+- Keep `emptyCategoriesBitmap()` as-is.
+- **New HTTP sibling (later):**
+  `POST /json/controls/resourcePolicies/settings/destinations`
+  `{ mode, categories: ["AI_SERVICES"] }` so raw HTTP agents skip the
+  bitmap too. Existing settings POST unchanged.
+- **Docs-only now:** the bit-index table (110 = AI Services), the
+  inverted enum, string-vs-numeric `customType`, and "re-GET after POST".
+
+### B. Enormous brittle settings payloads
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing + epic description (DEVELOP-34914) |
+| **Path** | `POST /json/controls/policyLayers/settings` |
+| **SDK today** | `updateLayerSettings(fullBlob)` — no merge, no subset type |
+
+**Footguns (observed).**
+
+- POST is a **full replace**. Omitting `cat0..cat110`, `prio0..prio110`,
+  or `bypassSslMitm0..bypassSslMitm110` wipes category/priority/MITM
+  state. Agents that send "just the AI knobs" destroy the rest.
+- Resource Policies **require** `dlpPolicyMethod: 2` in every settings
+  payload. Easy to miss; the policy then looks created but is broken.
+- Many unrelated / UI-only fields (`showPACUrl`, …) travel with the
+  blob. Agents copy-paste Confluence samples and still drop families.
+- Combined with A: even a "successful" POST (`saveIgnoredEntries` empty)
+  is not proof the fields persisted.
+
+**Proposed shapes.**
+
+```ts
+// Only AI Security knobs. SDK GET-merges, injects generated families
+// unless advanced: true, forces dlpPolicyMethod: 2, then re-GETs.
+client.policies.patchResourcePolicySettings(id, {
+  aiRiskEnabled: 1,
+  aiRiskEngines: "all",          // see G
+  linkPolicyToAllSubjects: 1,
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  monitoringMessage: "…",        // block/monitor page text
+});
+
+client.policies.getResourcePolicySettings(id, { view: "summary" | "full" });
+// summary: id, name, kind, enabled, destinations[], aiRisk, groups
+// full: wire blob (same as getLayerSettings)
+```
+
+- `getResourcePolicySettings` / `patchResourcePolicySettings`:
+  **SDK wrapper** over today's GET/POST settings. `createLayer` already
+  injects families on **create**; this is the missing **update** path.
+- **New HTTP sibling (later):**
+  `GET /json/controls/resourcePolicies/settings?customCategoryId=`
+  (dedicated noun — the epic's ask) and
+  `POST /json/controls/resourcePolicies/settings/patch` that
+  get-merge-posts **on the gateway**. Do not change
+  `/json/controls/policyLayers/settings`.
+- **Docs-only now:** "POST settings is full-echo; `dlpPolicyMethod: 2`
+  is mandatory; re-GET after POST."
+
+### C. Fragile two-step create
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing + Confluence "Resource Policies and the API" (DEVELOP-34914) |
+| **Paths** | `PUT /json/controls/policyLayers` then `POST /json/controls/policyLayers/settings` |
+| **SDK today** | `createLayer()` does both and returns **create ids only** (`customCategoryId`, `customCategoryNumber`). `createLayerStructure()` is step 1 alone. |
+
+**Footguns (observed).**
+
+- Step 1 alone returns success (`Successfully added custom category`)
+  and an id. AI risk, destinations, `dlpPolicyMethod`, and
+  `linkPolicyToAllSubjects` live **only** in step 2. Agents stop after
+  PUT and believe the policy is done.
+- A one-shot PUT of the full settings blob can also return success
+  and never appear in the Resource Policy UI (Confluence write-up).
+- Wrong `customType` (allowlist/blocklist instead of categories) cannot
+  be patched into a destination policy — the working recipe
+  **DELETEs** the layer and recreates (see §3).
+
+`createLayer({ isZeroTrustResourcePolicy: 1 })` already does the two
+HTTP calls. It does **not** return effective GET settings, does not
+set destinations / `aiRiskEnabled`, and does not verify persistence.
+
+**Proposed shape.**
+
+```ts
+const policy = await client.policies.createResourcePolicy({
+  name: "AI Security",
+  destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+  aiRiskEnabled: true,
+  aiRiskEngines: "all",
+  linkPolicyToAllSubjects: true,
+  monitoringMessage: "…",
+});
+// → effective GET settings (summary), not just ids
+// asserts bit 110 + categoriesSelectedType === 0 + dlpPolicyMethod === 2
+```
+
+- `createResourcePolicy`: **SDK wrapper**. PUT structure with
+  `customType: "e_custom_category_type_categories"` +
+  `isZeroTrustResourcePolicy: 1`, POST settings with families +
+  `dlpPolicyMethod: 2` + destination encoding, re-GET, return the
+  GET body. Keep `createLayer` / `createLayerStructure` unchanged.
+- **New HTTP sibling (optional):** one
+  `PUT /json/controls/resourcePolicies` that performs both steps
+  server-side and returns settings. Not required to ship the wrapper.
+- **Docs-only now:** "never stop after PUT; AI knobs are settings-only."
+
+### D. Magic-number / overlapping list surfaces
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing (DEVELOP-34915) |
+| **Paths** | `GET /json/controls/policyLayers/all?typeFilter=9&isZeroTrustLayer=&…` (empty filter strings **required**) |
+| | `GET /json/controls/resourcePolicies` |
+| **SDK today** | `listLayers({ isZeroTrustLayer?, typeFilter? })` · `listResourcePolicies()` |
+
+**Footguns (observed).**
+
+- Listing DLP policies is `typeFilter=9` on the Policy Layers `/all`
+  endpoint. There is no `listDlpPolicies`.
+- `resourcePolicies` and `policyLayers/all?isZeroTrustLayer=&typeFilter=`
+  overlap. Agents do not know which list is the source of truth for
+  AI Security vs DLP vs internet vs Private Access (`ztnaFlowPeerIds`).
+- `isZeroTrustLayer`: −1 all, 0 overlay, 1 resource policies.
+  `typeFilter`: −1 all; **9 = DLP**. Connector policies are
+  `customType === 12` after the fact.
+
+**Proposed shapes.**
+
+```ts
+client.policies.listDlpPolicies();
+client.policies.listAiSecurityPolicies();
+client.policies.listPolicies({ kind: "dlp" | "aiSecurity" | "resource" | "layer" | "connector" | "privateAccess" });
+```
+
+- All three: **SDK wrapper**. Apply the right `typeFilter` /
+  `isZeroTrustLayer` / `customType` / `aiRiskEnabled` client-side.
+  Keep `listLayers` / `listResourcePolicies` unchanged.
+- **New HTTP sibling (optional):**
+  `GET /json/controls/resourcePolicies?kind=dlp|aiSecurity|internet|privateAccess`.
+  Do not change `/policyLayers/all`.
+- **Docs-only now:** publish the `typeFilter` / `customType` integer
+  table (9 = DLP, 3 = categories after GET, 12 = connector).
+
+### E. AI Security Governance conversations
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing (DEVELOP-34915) |
+| **Path** | Reporter: `GET /ibreports/web/aiSecurityGovernance/conversations` (long query string) |
+| **Related UI** | Dashboard also uses `GET /ibreports/web/reports/{id}/web/aiRisk` and `…/aiRisk/conversation` — wrap the **Governance** path agents actually hit |
+| **SDK today** | **none** |
+
+**Footguns (observed).**
+
+- Long, dashboard-shaped query string. Time base is unclear (report
+  clock vs wall clock vs timezone).
+- **~15 minute** eventual consistency: a conversation that just
+  happened is often missing. Agents conclude "logging is broken".
+- List rows frequently have **null** `userRequest` / `aiResponse`.
+  Bodies exist on the detail fetch, not the list.
+- `domain` sometimes embeds session/vendor **tokens**. Must redact
+  before logging or returning to a model.
+
+**Proposed shapes.**
+
+```ts
+client.reporting.listAiConversations({
+  since, until,            // ISO-8601; SDK translates the query string
+  vendor,                  // validated — see G
+  textContains,
+});
+// list items are summaries (ids, vendor, times). Bodies may be null.
+
+client.reporting.getConversation(id);
+// detail fetch; redacts tokens in domain / message fields
+
+client.reporting.waitForConversation({ id, timeoutMs });
+// poll through the ~15m lag window; do not busy-loop
+```
+
+- All three: **SDK wrapper** over
+  `/ibreports/web/aiSecurityGovernance/conversations` (and the
+  detail/get that testing used). Route to the **reporter** host.
+- **New HTTP sibling (later):**
+  `GET /ibreports/web/aiConversations` and
+  `GET /ibreports/web/aiConversations/{id}` with ISO `since`/`until`
+  and bodies-on-get. Keep the Governance path unchanged.
+- **Docs-only now:** eventual consistency (~15m), "list bodies are
+  null — call get", redact `domain`.
+
+### F. Auth + split-brain hosts
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing (DEVELOP-34913) |
+| **Need** | `Authorization: Token <key>` **and** `User-Agent: ibossAPI` on every request (GETs included, plus XSRF cookies) |
+| **Routing** | Policy writes → **gateway** (`/json/…`). Conversations → **reporter** (`/ibreports/…`). Cloud (`/ibcloud/web/…`) often `access.denied` with the **same** key that works on gateway. |
+
+**Footguns (observed).**
+
+- Agents hand-rolling `fetch` omit `User-Agent: ibossAPI` or the
+  token scheme and get 401/403 that look like "no permission".
+- Sending a Resource Policy POST to the cloud host (or a conversation
+  GET to gateway/cloud) fails. Same key, wrong tier.
+- Library constructor requires explicit `{ domain, credentials }`.
+  Env/profile resolution lives only in the CLI
+  (`IBOSS_CLOUD_DOMAIN`, `IBOSS_API_KEY`, `iboss.config.json`).
+
+**What the SDK already does** once `IbossClient` is constructed:
+headers, cookies, XSRF, `accountSettingsId`, `connect()` host
+discovery. Do not re-solve that.
+
+**Proposed shapes.**
+
+```ts
+IbossClient.fromEnv();           // IBOSS_API_KEY + IBOSS_CLOUD_DOMAIN
+IbossClient.fromProfile(name?);  // same files the CLI uses
+
+// existing constructor unchanged
+new IbossClient({ domain, credentials: { apiKey } });
+
+client.raw(method, path, opts);  // infer tier from /json vs /ibreports vs /ibcloud
+// keep raw(tier, method, path, opts) — do not remove the 4-arg form
+```
+
+- `fromEnv` / `fromProfile` / `raw()` path-prefix inference /
+  error text that names "you hit cloud; this path is gateway":
+  **SDK wrapper** (constructor + request helpers). No new HTTP.
+- **Docs-only now:** the three-tier table and "cloud `access.denied`
+  ≠ bad key".
+
+### G. `aiRiskEngines`
+
+| | |
+|---|---|
+| **Evidence** | Confirmed in testing (DEVELOP-34913) |
+| **Wire** | Free-form string. Observed as `"chatgpt"` while testing **many** vendors. Other vendor strings are easy to invent and fail late or silently. |
+
+**Proposed shape.**
+
+```ts
+type AiRiskEngine =
+  | "chatgpt"
+  | "claude"
+  | "gemini"
+  | "copilot"
+  | "perplexity"; // publish the live list from the platform; do not guess in agents
+
+aiRiskEngines: "all" | AiRiskEngine[];
+```
+
+- Validation + `"all"` expansion: **SDK wrapper** on
+  `createResourcePolicy` / `patchResourcePolicySettings`. Unknown
+  values throw **before** the POST. Wire can still send the
+  comma-string / platform form the gateway expects.
+- **New HTTP:** none required. If the platform later accepts an
+  array, that is additive.
+- **Docs-only now:** `"chatgpt"` is the observed token; do not
+  send display names (`"ChatGPT"`). Confirm the remaining slugs
+  against the product list when implementing — do not treat the
+  union above as final.
+
+---
+
+## 2. Working recipe (migration / example)
+
+This is the sequence agents eventually used to get an AI Security
+Resource Policy that **actually persisted**. Document it so raw-HTTP
+and old-path callers can succeed. **Do not change these paths.**
+New wrappers in §1 implement this ritual so agents stop performing it
+by hand.
+
+1. **DELETE** the existing AI Security layer if it has the wrong
+   `customType` (allowlist/blocklist). Destination bits cannot be
+   patched onto that type; recreate as categories.
+2. **PUT** `/json/controls/policyLayers` with
+   `customType: "e_custom_category_type_categories"` and
+   `isZeroTrustResourcePolicy: 1`.
+3. **POST** `/json/controls/policyLayers/settings` with at least:
+   - `dlpPolicyMethod: 2`
+   - `aiRiskEnabled: 1`
+   - monitoring message
+   - `linkPolicyToAllSubjects: 1`
+   - `categoriesSelectedType: 0`
+   - `categories` bitmap with **bit 110** set
+   - generated families: `cat0..cat110`, `prio0..prio110`,
+     `bypassSslMitm0..bypassSslMitm110`
+4. **Re-GET** `/json/controls/policyLayers/settings?customCategoryId=`
+   and **assert** bit 110 is set and `categoriesSelectedType === 0`.
+   Do **not** trust POST success (including empty `saveIgnoredEntries`).
+
+`createResourcePolicy` + `setDestination` + `patchResourcePolicySettings`
+are this recipe behind one call each. `createLayer` / `updateLayerSettings`
+remain for callers who still want the raw two-step.
+
+---
+
+## 3. Remedy map (confirmed items)
+
+| Item | Additive SDK wrapper | New HTTP sibling (optional) | Docs-only |
+|---|---|---|---|
+| **A** destinations | `setDestination`, `ensureAiSecurityDestination` | `POST …/resourcePolicies/settings/destinations` | bit 110, inverted enum, re-GET |
+| **B** settings blob | `getResourcePolicySettings`, `patchResourcePolicySettings` (inject families; AI knobs only) | `GET …/resourcePolicies/settings`, `POST …/settings/patch` | full-echo + `dlpPolicyMethod: 2` |
+| **C** two-step create | `createResourcePolicy` → returns GET settings | `PUT …/resourcePolicies` (both steps) | never stop after PUT |
+| **D** lists | `listDlpPolicies`, `listAiSecurityPolicies`, `listPolicies({ kind })` | `GET …/resourcePolicies?kind=` | `typeFilter=9`, `customType` table |
+| **E** conversations | `listAiConversations`, `getConversation`, `waitForConversation` | `GET /ibreports/web/aiConversations` + `/{id}` | ~15m lag, null list bodies, redact |
+| **F** auth / hosts | `fromEnv`, `fromProfile`, `raw()` tier inference | — | three-tier + `User-Agent: ibossAPI` |
+| **G** engines | `aiRiskEngines: "all" \| string[]` validated | — | observed slug `"chatgpt"` |
+
+Existing paths and SDK symbols in the left-hand column of §1 stay.
+
+---
+
+## 4. SDK inventory
 
 ### What this repo is
 
@@ -133,107 +503,26 @@ What the SDK already hides well (do not re-solve these):
 
 - Host discovery (`connect()` walks clusters; never hardcode node DNS)
 - XSRF / cookie jar per host
-- Two-step policy **create** (`createLayer()`)
+- Two-step policy **create** (`createLayer()`) — ids only; see C
 - Peer-create-then-poll (`createPeerAndFind()`)
 - Resource-list filter defaults (the long `anchored=-1&…` query)
 - PAC-zone list gotchas (`/pacZones` plural + `requestKey=v2`)
 - Pagination of `GET /json/controls/policyLayers/all`
 - Typed errors vs raw status codes
 
-What remains agent-hostile lives mostly in **payload shape, overloaded
-nouns, missing reads, and missing patch**.
+Confirmed gaps (A–G) are payload shape, overloaded nouns, missing
+verify-after-write, and unwrapped reporter Governance — not transport.
 
 ---
 
-## 2. Prioritized findings
+## 5. Additional inventory (not confirmed in that test pass)
 
-Priority:
+Useful, lower priority than A–G. Do not start here.
 
-- **P0** — agents silently destroy state or cannot complete a common
-  intent (create / update / target a resource policy) without tribal
-  knowledge.
-- **P1** — agents can get there, but only via overloaded filters,
-  unwrapped reporter endpoints, or guesswork.
-- **P2** — inconsistency and docs-for-humans that waste context and
-  cause retries.
+### Full-echo updates outside Resource Policies
 
-Each item names the current path / method / SDK symbol, why it hurts,
-and a non-breaking remedy.
-
-### P0-1 — Resource Policy settings live on the Policy Layers path
-
-| | |
-|---|---|
-| **Current** | `GET /json/controls/policyLayers/settings?customCategoryId=` · `POST /json/controls/policyLayers/settings` |
-| **SDK** | `client.policies.getLayerSettings(id)` · `updateLayerSettings(fullBlob)` |
-| **Also listed as** | `GET /json/controls/resourcePolicies` (`listResourcePolicies`) — list only; no get/settings/update on that noun |
-
-**Why it's painful.** The epic's example is exact: reading a Resource
-Policy is a Policy Layers URL plus an opaque `customCategoryId`. Four
-console objects (Resource Policies, Private Access routed policies,
-Policy Layers, Connector Policies) share `/json/controls/policyLayers`.
-Agents pick the wrong list (`listLayers` vs `listResourcePolicies`),
-omit `isZeroTrustResourcePolicy: 1` / `dlpPolicyMethod: 2`, or POST a
-partial body and wipe `cat0..cat110`, `prio0..prio110`,
-`bypassSslMitm0..bypassSslMitm110`, and the 400-char `categories`
-bitmap. Internal write-up
-[Resource Policies and the API](https://ibosscybersecurity.atlassian.net/wiki/spaces/~649395834/pages/4007690273/Resource+Policies+and+the+API)
-shows a one-shot PUT that returns success but never appears in the UI —
-the two-step ritual is mandatory.
-
-`createLayer()` already wraps create. **Update does not.** There is no
-patch. There is no dedicated get that returns a Resource Policy as a
-Resource Policy.
-
-**Remedy (non-breaking).**
-
-1. **SDK wrappers now** (DEVELOP-34914):
-   - `getResourcePolicySettings(id)` → existing GET, typed/normalized.
-   - `patchResourcePolicySettings(id, patch)` → GET current, deep-merge
-     `patch`, re-inject generated field families unless `advanced: true`,
-     POST the full blob to the existing settings path.
-   - `createResourcePolicy({…})` → `createLayer({ isZeroTrustResourcePolicy: 1 })`
-     then `getResourcePolicySettings` so the agent sees effective state.
-2. **New sibling paths** (same `/json/controls/` convention):
-   - `GET /json/controls/resourcePolicies/settings?customCategoryId=`
-     (or `/json/controls/resourcePolicies/{id}/settings`)
-   - `POST /json/controls/resourcePolicies/settings` as a documented
-     alias of today's POST, plus
-   - `POST /json/controls/resourcePolicies/settings/patch` (or `PATCH`
-     on the same resource) that performs get-merge-post **on the
-     gateway** so raw HTTP agents do not have to.
-
-Do not change `/json/controls/policyLayers/settings`.
-
-### P0-2 — Destinations are a bitmap + inverted enum
-
-| | |
-|---|---|
-| **Current** | Settings fields `categories` (≈400-char `0`/`1` string), `categoriesSelectedType`, `cat0..cat110`, `customType` |
-| **SDK** | `emptyCategoriesBitmap()`, `generateCategoryFields()` — generate the blob, do not interpret it |
-| **Wire quirk** | Create takes `customType: "e_custom_category_type_*"` (string); GET returns `customType: 3` (number). `categoriesSelectedType: 0` means **Selected Destinations** (inverted vs the English). Bit 110 is AI Services. Recreating an allowlist without echoing `categories` silently drops the bitmap. |
-
-**Why it's painful.** Agents invent the bitmap, flip the enum the wrong
-way, or POST an allowlist recreate that drops AI-Services targeting.
-This showed up in Bug Replicator / AI Chat testing (DEVELOP-34916).
-
-**Remedy (non-breaking).**
-
-- **SDK:** typed helpers, e.g.
-  `setDestination({ mode: "selectedWebCategories", categories: ["AI_SERVICES"] })`,
-  `ensureAiSecurityDestination(settings)`,
-  `decodeCategoriesBitmap(bitmap) → string[]`. Reject or warn when
-  `type: "allowlist"` is combined with a categories bitmap (those are
-  different policy kinds). Keep `emptyCategoriesBitmap()` as-is.
-- **New sibling (optional, later):**
-  `POST /json/controls/resourcePolicies/settings/destinations` with
-  `{ mode, categories: ["AI_SERVICES", …] }` that writes the bitmap
-  server-side. Existing settings POST unchanged.
-
-### P0-3 — Almost every update is full-echo (GET → mutate → POST whole object)
-
-Applies beyond Resource Policies. Agents that send "just the field I
-changed" wipe server-generated ids, watermarks, and unrelated flags.
+Agents that send "just the field I changed" wipe server-generated ids
+on other nouns too.
 
 | Current path | SDK symbol | Echo rule |
 |---|---|---|
@@ -242,365 +531,186 @@ changed" wipe server-generated ids, watermarks, and unrelated flags.
 | `POST /ibcloud/web/groups/filtering` | `groups.updateFilteringGroup` | full group + Java `type` discriminator |
 | `POST /json/users` | `directory.updateUser` | full user (`id` required) |
 | `POST /json/computer` | `directory.updateDevice` | full device |
-| `POST /json/network/proxy/settings` | `network.updateProxySettings` | **no GET wrapper** — agents must `raw()` first |
+| `POST /json/network/proxy/settings` | `network.updateProxySettings` | **no GET wrapper** |
 | `POST /json/network/sslDecryption/settings` | `ssl.updateSettings` | **no GET wrapper** |
 | `POST /json/network/sslDecryption/domains` | `ssl.updateDomainBypass` | **no GET wrapper** |
-| `POST /json/network/contentAnalysis/settings?mode=0` | `dlp.updateGeneralSettings` | full settings; `mode` selects DLP vs malware |
+| `POST /json/network/contentAnalysis/settings?mode=0` | `dlp.updateGeneralSettings` | `mode` selects DLP vs malware |
 | `POST /json/controls/apps` | `apps.updateAppControls` | giant per-app flag map |
 | `POST /json/network/mobileClients/settings` | `network.updateMobileClientSettings` | includes connector security key |
 
-**Remedy.** Shared SDK helper `patchByGetMergePost(read, write, patch)`
-used by new `patch*` methods on each sub-client. Existing `update*`
-methods stay full-replace. Platform later: additive `PATCH` or
-`…/settings/patch` siblings that do the merge server-side (DEVELOP-34912
-description: "UPDATE support … pulls the existing JSON, combines with
-the patched, and sends it to the normal POST").
+**Remedy (after A–C).** Shared SDK helper `patchByGetMergePost` used by
+new `patch*` methods. Existing `update*` stay full-replace. Highest
+leverage after Resource Policies: PAC, proxy, SSL, groups.
 
-Highest leverage after Resource Policies: PAC zones, proxy settings,
-SSL settings, default policy groups.
-
-### P0-4 — Library constructor has no env/profile defaults
-
-| | |
-|---|---|
-| **Current** | `new IbossClient({ domain, credentials: { apiKey } })` — both required. CLI/profile resolution lives in `cli/context.ts`, not the client. |
-| **Raw HTTP** | Every call needs `Authorization: Token …`, `User-Agent: ibossAPI`, cookies, `X-XSRF-TOKEN`, and the correct host. Cloud paths often `access.denied` with a key that works on gateway. Policy writes are gateway; conversations are reporter. |
-
-**Why it's painful.** Agents that skip the SDK (or call `client.raw`
-with the wrong `tier`) fail in ways that look like auth. `aiRiskEngines`
-is free-form wherever it appears; unknown vendor strings fail late or
-silently. DEVELOP-34913.
-
-**Note:** the SDK request layer already injects headers, cookies, XSRF,
-`accountSettingsId`, and host routing **once you use `IbossClient`**.
-The gap is (a) constructing the client, (b) `raw()` tier selection,
-(c) anything not wrapped (AI Risk / conversations).
-
-**Remedy (non-breaking).**
-
-- Additive `IbossClient.fromEnv()` / `fromProfile(name?)` that reads
-  `IBOSS_CLOUD_DOMAIN` + `IBOSS_API_KEY` the same way the CLI does.
-  Constructor stays explicit.
-- `client.raw`: infer tier from path prefix (CLI `api` already does
-  this) so `raw("GET", "/json/…")` cannot hit cloud.
-- Clearer `IbossHostUnavailableError` / 403-on-GET messages that name
-  the tier the path needed vs the tier used.
-- `aiRiskEngines: "all" | KnownVendor[]` validated against a published
-  vendor list (ChatGPT, Claude, Gemini, Copilot, Perplexity, …). Unknown
-  values throw before the request.
-
-No change to existing constructor signatures or header names.
-
----
-
-### P1-1 — Policy lists are overloaded and filtered by magic integers
-
-| | |
-|---|---|
-| **Current** | `GET /json/controls/policyLayers/all?isZeroTrustLayer=&typeFilter=&currentRow=&maxItems=&nameFilter=&…` (empty filter strings are **required**) |
-| **SDK** | `listLayers({ isZeroTrustLayer?: -1\|0\|1, typeFilter?: number })` |
-| **Overlap** | `GET /json/controls/resourcePolicies` → `listResourcePolicies()` — a second list of "resource-shaped" rows, including Private Access routed policies (`ztnaFlowPeerIds`) |
-| **Magic** | `isZeroTrustLayer`: −1 all, 0 overlay layers, 1 resource policies. `typeFilter`: −1 all; agents have been using **`typeFilter=9` for DLP**. Connector policies are `customType === 12` after the fact. DLP *rules* are a different tree (`/json/contentAnalysisRules`). |
-
-**Why it's painful.** "List DLP policies" and "list AI security
-policies" are not nouns on the wire. Agents grep `listLayers` output or
-guess `typeFilter`. Routed ZTNA policies appear in
-`listResourcePolicies()` beside SaaS/Internet policies. DEVELOP-34915.
-
-**Remedy.**
-
-- **SDK:** `listPolicies({ kind: "resource" \| "layer" \| "connector" \| "privateAccess" \| "dlp" \| "aiSecurity" })` plus
-  dedicated `listDlpPolicies()` / `listAiSecurityPolicies()` that apply
-  the correct filter and distinguish `ztnaFlowPeerIds`. Keep
-  `listLayers` / `listResourcePolicies` unchanged.
-- **Sibling (optional):**
-  `GET /json/controls/resourcePolicies?kind=dlp|aiSecurity|internet|privateAccess`
-  with a stable `kind` enum. Do not change `/policyLayers/all`.
-
-Document `typeFilter` values in `docs/api/policy-layers.md` even before
-code lands (additive docs).
-
-### P1-2 — Governance / AI conversations are unwrapped reporter UI endpoints
-
-| | |
-|---|---|
-| **Current** | `GET /ibreports/web/reports/{reportId}/web/aiRisk` (stats + conversation list; `statType=CONVERSATION_STAT\|USER_STAT`, long query string) |
-| | `GET /ibreports/web/reports/{reportId}/web/aiRisk/conversation` (one thread) |
-| **SDK** | **none.** `client.reporting` wraps incidents, drill-down top-N, and URL logs only. |
-| **UI source** | [Dashboard Controllers](https://ibosscybersecurity.atlassian.net/wiki/spaces/~628262babdf2f30067d2321a/pages/5046829057/Dashboard+Controllers) |
-
-**Why it's painful.** Agents must first `GET /ibreports/web/reports/lite`
-to learn `reportId`, then reproduce the dashboard query (time base
-unclear, ~15 minute ingest lag, fuzzy match, list rows with **null
-message bodies**, vendor tokens sometimes stuffed into `domain`). Hitting
-cloud with the same key looks like permission failure. DEVELOP-34915.
-
-**Remedy.**
-
-- **SDK wrappers:** `reporting.listAiConversations({ since, until, vendor, textContains, reportId? })`,
-  `reporting.getConversation(id, { reportId? })` (redact secrets in
-  returned bodies), `waitForConversation({ id, timeoutMs })` that polls
-  through the lag window. Resolve `reportId` internally via `listReports`.
-- **Sibling (preferred for agents):**
-  `GET /ibreports/web/aiConversations` and
-  `GET /ibreports/web/aiConversations/{id}` that do not require a
-  drill-down `reportId`, accept ISO `since`/`until`, and return message
-  bodies on get (list may stay summary-only). Document eventual
-  consistency (~15m) on both.
-- Keep `/reports/{id}/web/aiRisk*` unchanged.
-
-### P1-3 — Missing GET wrappers next to POST-only settings
-
-Agents cannot read-before-write without `client.raw` and guessing the
-path.
+### Missing GET wrappers next to POST-only settings
 
 | POST (wrapped) | Missing GET |
 |---|---|
-| `POST /json/network/proxy/settings` (`updateProxySettings`) | `GET` same path — unwrapped |
-| `POST /json/network/sslDecryption/settings` (`ssl.updateSettings`) | `GET` same path — unwrapped (docs already tell agents to `raw()`) |
-| `POST /json/network/sslDecryption/domains` | no GET |
-| `POST /json/network/mobileClients/ztnaFlowDhcpGateway` | no GET |
-| `POST /ibcloud/web/preferences/updateReleaseSettings` | no GET |
-| `POST /ibcloud/web/preferences/autoUpdateSettings` | no GET |
+| `updateProxySettings` | `GET /json/network/proxy/settings` unwrapped |
+| `ssl.updateSettings` | `GET /json/network/sslDecryption/settings` unwrapped |
+| `ssl.updateDomainBypass` | no GET |
+| `updateZtnaFlowDhcpGateway` | no GET |
+| `updateReleaseSettings` / `updateAutoUpdateSettings` | no GET |
 
-**Remedy.** Additive `getProxySettings()`, `ssl.getSettings()`,
-`getDomainBypass()`, `getZtnaFlowDhcpGateway()`, etc., calling the
-existing GET paths. Then the P0-3 `patch*` helpers can use them.
-No new paths required unless a GET does not exist on the platform
-(confirm per endpoint during implementation).
+**Remedy.** Additive `get*` methods. **SDK wrapper**, no new paths
+unless a GET does not exist on the platform.
 
-### P1-4 — Create rituals that are not one call (beyond policies)
+### Other multi-step rituals
 
-| Current | SDK today | Remaining pain | Remedy |
-|---|---|---|---|
-| `PUT /json/network/mobileClients/peer` returns `{ message: "Success." }` — **no uuid** | `createPeerAndFind()` polls list | Agents still call `createPeer` from docs / raw | Document "use `createPeerAndFind`"; optional sibling `PUT …/peer` that returns `{ uuid }` (new response field is additive if old clients ignore it — prefer a new path `PUT …/peer/create` if the empty body must stay) |
-| Resource: copy catalog → new uuid → associate | `resources.save` + `policies.associateResources` | Association needs **both** `customCategoryId` (query) and `customCategoryNumber` (body) and field name `resourceIds` | `policies.attachResources(policyId, uuids)` that looks up the number; keep `associateResources` |
-| DLP rule then response | `createContentAnalysisRule` + `createPolicyResponse` | Rule id not visible for a few seconds | `createDlpRuleAndResponse` with retry; document 422 vs lag |
-| Connector policy | `createLayerStructure` with `customType: 12` + group map | Not a first-class method; `customType` numeric vs string | `createConnectorPolicy({ platform, groups })` |
+| Current | SDK today | Remedy (wrapper) |
+|---|---|---|
+| `PUT /json/network/mobileClients/peer` returns no uuid | `createPeerAndFind()` | docs: use that; optional `PUT …/peer/create` sibling |
+| `associateResources` needs both ids + field `resourceIds` | as-is | `attachResources(policyId, uuids)` |
+| DLP rule then response; id lags | two calls | `createDlpRuleAndResponse` with retry |
+| Connector policy `customType: 12` | `createLayerStructure` | `createConnectorPolicy({ platform, groups })` |
 
-### P1-5 — Reporting is a two-step "find reportId, then metric"
+### Reporting two-step + paging
 
-| | |
-|---|---|
-| **Current** | `GET /ibreports/web/reports/lite?month=&year=&dailyReport=-1&reportingGroupId=-1` then `GET /ibreports/web/reports/{reportId}/web/{metric}` |
-| **SDK** | `listReports()` + `topBlockedDomains(reportId, …)` etc. |
-| **Paging** | `currentRowNumber` is **1-indexed** here; gateway lists use `currentRow` **0-indexed** |
+`listReports()` then `topBlockedDomains(reportId)`. Reporter
+`currentRowNumber` is **1-indexed**; gateway `currentRow` is 0-indexed.
+Wrapper: `topBlockedDomains({ month, year })` that resolves `reportId`.
 
-**Remedy.** `reporting.topBlockedDomains({ month, year, … })` that
-resolves the current report internally. Keep the `reportId` overloads.
-Normalize paging in new helpers (`page` / `pageSize`, 0-based) without
-changing the raw query names.
+### 422 means subscription *and* bad payload
 
-### P1-6 — 422 means both "no subscription" and "bad payload"
+Always `IbossSubscriptionError`. Additive `error.code`
+(`subscription` \| `validation` \| `unknown`); optional later
+`IbossValidationError`. Do not change existing `instanceof` behavior.
 
-| | |
-|---|---|
-| **Current** | HTTP 422 → `IbossSubscriptionError` always, with optional `subscriptionFlags` |
-| **Examples** | DLP without `ENABLE_DLP_POLICIES_DASHBOARD`; ZTNA without `ENABLE_PRIVATE_ACCESS`; also malformed settings |
+### Inconsistent envelopes, UI query params, untyped blobs
 
-**Remedy.** Do not change the class of existing throws. Add
-`IbossValidationError extends IbossApiError` for 422 bodies that are
-clearly schema/payload (when the platform later distinguishes, or when
-the SDK can parse the body). Additive `error.code` field
-(`subscription` \| `validation` \| `unknown`) on 422s. Docs: treat
-subscription 422 as an expected skip, not a bug.
+Gateway `{ entries, totalCount }` vs cloud `{ successful, result }` vs
+bare arrays. `currentPolicyBeingEdited` means policy group. `mode=0`
+selects DLP vs malware. New helpers return `{ items, total?, nextPage? }`
+and take `{ policyGroup }`. Do not change existing return types.
+
+`resources.save` / `firewall.saveRule` are upserts. 403-on-GET is
+XSRF/session (`IbossApiError`, not `IbossXsrfError`). Do not reclassify
+403-on-GET (breaking). Additive aliases only.
 
 ---
 
-### P2-1 — Inconsistent list envelopes and identity names
+## 6. Proposed agent surface (additive)
 
-Gateway lists usually `{ entries, totalCount }`; cloud lists are bare
-arrays or `{ successful, result }`. Sub-clients normalize **some**
-methods to arrays (`listLayers`, `listPacZones`, `resources.list`) and
-**not others** (`reporting.listUrlLogEntries` returns the envelope;
-`listReports` returns an array). Identity fields: `customCategoryId` /
-`customCategoryNumber` (policies), `pacSettingsId` (locations),
-`uuid` (resources, peers), `groupNumber` (filtering groups), `id`
-(users, firewall). Console says "Resources"; paths say `zeroTrust`.
-Console says "Default Policies"; API says `groups/filtering`. Devices
-write `/json/computer` and list `/json/computers/static`.
-
-**Remedy.** Additive docs table (below). New list helpers always return
-`{ items, total?, nextPage? }`. Do not change existing return types.
-Alias fields on new Resource Policy views: `{ id: customCategoryId, name: customCategoryName, … }`
-**in addition to** the wire names.
-
-### P2-2 — Query parameters that exist for the UI, not for agents
-
-| Parameter | Where | Issue |
-|---|---|---|
-| `currentPolicyBeingEdited` | firewall, apps, SSL, mobile-client settings | Means "policy group number" |
-| `mode=0` on content-analysis settings | DLP vs malware view | Integer selects product area |
-| Required empty `nameFilter`, `domainFilter`, … | `policyLayers/all` | Omitted → platform error; SDK already sends `""` |
-| `requestKey=v2` | PAC zones | Required; singular list path 500s |
-| `dailyReport=-1`, `reportingGroupId=-1` | reports/lite | Sentinel "all" |
-| `includeAllRecord=false` | URL log archives | Boolean-as-query, easy to invert |
-| Resource list: `anchored`, `availability`, `confidentiality`, … all `-1` | `GET /ibcloud/web/zeroTrust/resource` | SDK defaults them; raw agents must copy the set |
-
-**Remedy.** Wrappers already hide most of these. New methods take
-`{ policyGroup }`, `{ view: "dlp" \| "malware" }`, `{ includeAll }`.
-Document sentinels in `errors-and-gotchas.md`. No path changes.
-
-### P2-3 — Giant untyped blobs and console-oriented docs
-
-Settings objects (policy layer, app controls, geo-IP, SSL, resource
-catalog entries) are `Record<string, unknown>` plus tens of unused
-`show*` UI flags (see the Confluence payload: `showRegistrationInterval`,
-`showPACUrl`, …). Docs are titled by **admin-console section** and tell
-you to "GET first, modify, POST whole" — correct for humans, expensive
-for an agent's context window.
-
-**Remedy.** New agent views: `summary` (id, name, kind, enabled, action,
-destinations, groups) vs `full` (wire blob). `getResourcePolicySettings`
-defaults to `view: "summary"` and accepts `view: "full"`. Keep returning
-the full blob from `getLayerSettings`. Add this proposal to the docs
-index (done in this PR); later, per-feature docs get an "Agent quick
-path" section pointing at the new symbols.
-
-### P2-4 — Pagination and time bases are not one convention
-
-| API | Cursor | Notes |
-|---|---|---|
-| `policyLayers/all` | `currentRow` + `maxItems`, 0-based | SDK pages internally; no caller-visible page token |
-| PAC zones | `currentRowNumber` + `maxItemsToReturn`; `totalRecords` **unreliable** | SDK requests one large page (1000) |
-| Resources | `currentRowNumber` + `maxItemsToReturn` (default 100) | Easy to silently truncate |
-| URL logs / top-N | `currentRowNumber` **1-based** | Easy off-by-one vs gateway |
-| AI Risk conversations | dashboard query + report clock | Unclear timezone / lag |
-
-**Remedy.** New helpers use `{ page, pageSize }` or opaque `pageToken`.
-Warn in logs when `items.length === pageSize`. Document reporter lag.
-Do not change existing query parameter names.
-
-### P2-5 — Side effects and "read-shaped" writes
-
-Not many GETs mutate, but several **names** lie:
-
-- `resources.save` is POST create-or-update (`/zeroTrust/resources/save`).
-- `firewall.saveRule` is PUT create-or-update.
-- `ssl.updateSettings` has no read pair.
-- `connect()` issues five GETs including a reporter prime — fine, but
-  agents that "just GET mySettings" never discover gateway/reporter.
-- 403 on GET is session/XSRF, not permissions (`IbossApiError`, not
-  `IbossXsrfError` — that class is mutations only). Agents mis-handle
-  this.
-
-**Remedy.** Additive aliases `createOrUpdateResource` / `upsertFirewallRule`.
-Keep `save`. Document 403-on-GET in the agent quick path. Optional:
-classify 403-on-GET as `IbossXsrfError` only if we can do it without
-breaking `instanceof` checks — **do not**, unless we add a new subclass
-used by new code paths.
-
----
-
-## 3. Proposed agent surface (additive)
-
-Target shape for agents. All names are new. Old symbols remain.
+All names are new. Old symbols remain. Confirmed items first.
 
 ```ts
-// Construction (P0-4)
+// F — construction
 IbossClient.fromEnv()
 IbossClient.fromProfile(name?: string)
 
-// Policies by kind (P1-1)
-client.policies.listPolicies({ kind })
+// D — lists
 client.policies.listDlpPolicies()
 client.policies.listAiSecurityPolicies()
+client.policies.listPolicies({ kind: "dlp" | "aiSecurity" | … })
 
-// Resource Policy as its own noun (P0-1)
+// C + B — Resource Policy as its own noun
+client.policies.createResourcePolicy({
+  name,
+  destinations,
+  aiRiskEnabled,
+  aiRiskEngines,          // G: "all" | string[]
+  linkPolicyToAllSubjects,
+  monitoringMessage,
+})
 client.policies.getResourcePolicySettings(id, { view?: "summary" | "full" })
-client.policies.patchResourcePolicySettings(id, patch)
-client.policies.createResourcePolicy({ name, type, settings, destinations })
-client.policies.attachResources(policyId, resourceUuids)
+client.policies.patchResourcePolicySettings(id, { /* AI knobs only */ })
 
-// Destinations without a bitmap (P0-2)
-client.policies.setDestination(id, { mode, categories: ["AI_SERVICES"] })
-decodeCategoriesBitmap / encodeCategoriesBitmap
-ensureAiSecurityDestination(settings)
+// A — destinations without a bitmap
+client.policies.setDestination(id, { mode: "selectedWebCategories", categories: ["AI_SERVICES"] })
+client.policies.ensureAiSecurityDestination(id)
 
-// Conversations (P1-2)
+// E — conversations (reporter)
 client.reporting.listAiConversations({ since, until, vendor, textContains })
-client.reporting.getConversation(id)
+client.reporting.getConversation(id)          // redacted
 client.reporting.waitForConversation({ id, timeoutMs })
-
-// Generic patch (P0-3) — used by the methods above
-// get → merge → post; never exposed as a replacement for update*
 ```
 
-Proposed **sibling paths** (platform, existing paths untouched):
+Optional **sibling paths** (platform; existing paths untouched):
 
 ```
 GET    /json/controls/resourcePolicies/settings?customCategoryId=
 POST   /json/controls/resourcePolicies/settings/patch
-GET    /json/controls/resourcePolicies?kind=dlp|aiSecurity|internet|privateAccess
 POST   /json/controls/resourcePolicies/settings/destinations
+PUT    /json/controls/resourcePolicies          # optional one-shot create
+GET    /json/controls/resourcePolicies?kind=dlp|aiSecurity|internet|privateAccess
 GET    /ibreports/web/aiConversations
 GET    /ibreports/web/aiConversations/{id}
 ```
 
-Until those exist, SDK methods call today's paths.
+Until those exist, SDK methods call today's paths
+(`/json/controls/policyLayers*`,
+`/ibreports/web/aiSecurityGovernance/conversations`).
 
 ---
 
-## 4. What we will not do in follow-up slices
+## 7. What we will not do in follow-up slices
 
 - Rename or remove `getLayerSettings`, `updateLayerSettings`,
   `createLayer`, `listLayers`, `listResourcePolicies`, `createPeer`,
   `associateResources`, or any existing path.
-- Require OpenAPI generation as a blocker (hand-written wrappers stay;
-  a later additive spec export is welcome).
+- Change the working-recipe paths in §2 — wrappers hide them; they stay.
+- Require OpenAPI generation as a blocker.
 - Put API keys in chat, docs, tests, or examples (placeholders only).
-- Change 403-on-GET from `IbossApiError` to `IbossXsrfError` (breaking
-  for `instanceof` callers).
+- Change 403-on-GET from `IbossApiError` to `IbossXsrfError`.
 - Collapse the four policy types onto one new path; we **split** them
   for agents while the wire family stays shared.
+- Treat POST settings success as persistence (wrappers re-GET).
 
 ---
 
-## 5. Next implementation slices
+## 8. Next implementation slices
 
-Suggested kickoff order. Each slice is independently mergeable and
-non-breaking. Tickets in parentheses already exist.
+Kickoff order is the **confirmed** list. Each slice is independently
+mergeable and non-breaking.
 
-1. **Resource Policy get + patch UPDATE** (DEVELOP-34914) —
-   `getResourcePolicySettings` / `patchResourcePolicySettings` /
-   `createResourcePolicy` in `policies.ts`; mock-server coverage that
-   a partial patch cannot drop `cat*` / bitmap / `dlpPolicyMethod`.
-   Platform sibling paths can land in parallel and the wrappers switch
-   when present (try sibling, fall back to policyLayers).
-2. **Typed destinations** (DEVELOP-34916) — category name ↔ bit index
-   table (bit 110 = AI Services), `setDestination`, reject
-   allowlist+bitmap. Depends on slice 1's get/patch.
-3. **Friendly policy lists** (DEVELOP-34915, first half) —
-   `listPolicies({ kind })`, `listDlpPolicies`, `listAiSecurityPolicies`;
-   document `typeFilter` / `customType` integers.
-4. **Governance conversations** (DEVELOP-34915, second half) — wrap
-   `…/web/aiRisk` + `…/aiRisk/conversation`; `listAiConversations` /
-   `getConversation` / lag poll; redact. Then propose
-   `/ibreports/web/aiConversations` as the reporter sibling.
-5. **Client defaults** (DEVELOP-34913) — `fromEnv` / `fromProfile`,
-   `raw()` tier inference, `aiRiskEngines` validation. Smallest code
-   change; can ship anytime, even first, if we want a quick win.
-6. **Read + patch pairs for PAC / proxy / SSL / groups** (P0-3, P1-3) —
-   shared merge helper; no platform change required to start.
-7. **Docs pass** — "Agent quick path" section on
-   `resource-policies.md`, `policy-layers.md`, `reporting-and-logs.md`,
-   `errors-and-gotchas.md` once symbols exist. This PR only adds *this*
-   proposal.
+1. **A — Typed destinations** (DEVELOP-34916) —
+   category name ↔ bit index (110 = AI Services),
+   `setDestination` / `ensureAiSecurityDestination`, reject
+   allowlist+categories, re-GET assert. This is the highest-leverage
+   hide-the-footgun.
+2. **B + C — Resource Policy get / patch / create** (DEVELOP-34914) —
+   `getResourcePolicySettings`, `patchResourcePolicySettings` (AI knobs
+   only; inject families; `dlpPolicyMethod: 2`), `createResourcePolicy`
+   that returns effective GET settings. Mock-server: a partial patch
+   cannot drop `cat*` / bitmap; POST-success-without-persist is a test
+   case. Platform siblings can land in parallel (try sibling, fall back).
+3. **D — Friendly lists** (DEVELOP-34915) —
+   `listDlpPolicies` (`typeFilter=9`), `listAiSecurityPolicies`,
+   `listPolicies({ kind })`.
+4. **E — Governance conversations** (DEVELOP-34915) —
+   wrap `/ibreports/web/aiSecurityGovernance/conversations`;
+   `listAiConversations` / `getConversation` / `waitForConversation`;
+   redact `domain`; document ~15m lag. Later sibling
+   `/ibreports/web/aiConversations`.
+5. **F + G — Client defaults + engines** (DEVELOP-34913) —
+   `fromEnv` / `fromProfile`, `raw()` tier inference, validated
+   `aiRiskEngines: "all" | string[]`. Small; can ship beside 1–2.
+6. **Inventory follow-ups** (§5) — PAC / proxy / SSL / groups patch
+   pairs, `attachResources`, reporting `reportId` resolution. After A–G.
+7. **Docs pass** — "Agent quick path" on `resource-policies.md`,
+   `policy-layers.md`, `reporting-and-logs.md`, `errors-and-gotchas.md`
+   once symbols exist. This PR is the proposal + the §2 recipe.
 
-Recommended first implementation PR after this doc: **slice 1 + tests**,
-optionally bundled with slice 5 if the client factory is needed to
-exercise live agent flows.
+Recommended first **code** PR: **slice 1** (destinations) + the
+create/patch pieces of **slice 2** that destinations need to persist,
+with tests that re-GET after POST and that allowlist+categories is
+rejected. Slice 5 is a cheap companion if agents will live-test.
 
 ---
 
-## 6. Sources
+## 9. Sources
 
+- **Confirmed:** Bug Replicator + AI Chat testing folded into
+  DEVELOP-34912 (comment) and children 34913–34916. Destination bitmap,
+  inverted `categoriesSelectedType`, string-vs-numeric `customType`,
+  allowlist drop, `saveIgnoredEntries` false success, two-step create,
+  `typeFilter=9`, `/ibreports/web/aiSecurityGovernance/conversations`
+  lag/null-bodies/token-in-domain, gateway-vs-reporter-vs-cloud,
+  `aiRiskEngines: "chatgpt"`.
 - This repo: `packages/sdk/src/api/*`, `packages/sdk/src/client/*`,
   `docs/api/*`, `docs/ARCHITECTURE.md`, `AGENTS.md`.
-- Epic + children: DEVELOP-34912 … 34916 (intake from Bug Replicator
-  and AI Chat testing).
 - [Resource Policies and the API](https://ibosscybersecurity.atlassian.net/wiki/spaces/~649395834/pages/4007690273/Resource+Policies+and+the+API)
   (two-step vs one-shot create).
 - [Dashboard Controllers](https://ibosscybersecurity.atlassian.net/wiki/spaces/~628262babdf2f30067d2321a/pages/5046829057/Dashboard+Controllers)
-  (`/ibreports/web/reports/{id}/web/aiRisk` and `/conversation`).
+  (`/reports/{id}/web/aiRisk` — related UI, not the Governance path).
 - DEVELOP-19593 (`policyLayers/all` filter params including `typeFilter`).
