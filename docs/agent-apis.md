@@ -17,21 +17,31 @@ remedies. Existing wire APIs stay as they are.
    epic description: a **dedicated Resource Policy read/update surface**
    (today's settings GET is a Policy Layers URL) plus **UPDATE/patch**
    that get-merge-posts so agents send only what changed.
-2. **§2 Confirmed findings** (Bug Replicator + AI Chat) are the live
-   footguns that surface must hide — typed destinations first. They
-   outrank inventory.
-3. **§5** is SDK inventory. **§6** is additional inventory that was
-   **not** independently reproduced in that testing — useful, not the
-   kickoff.
+2. **§2 Ground-truth wire shapes** are redacted Sep 9–10
+   request/responses from Bug Replicator. **Treat as ground truth
+   over speculation.**
+3. **§3 Confirmed findings** map those traces + AI Chat testing onto
+   proposed wrappers. They outrank inventory.
+4. **§6** is SDK inventory. **§7** is additional inventory that was
+   **not** in the traces — useful, not the kickoff.
 
-Child tickets already filed under the epic:
+Child tickets under the epic:
 
-| Ticket | Confirmed item |
+| Ticket | Item |
 |---|---|
-| [DEVELOP-34916](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34916) | A — typed destinations |
+| [DEVELOP-34918](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34918) / [DEVELOP-34916](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34916) | A — typed destinations |
 | [DEVELOP-34914](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34914) | B + C — settings patch + one-shot create |
 | [DEVELOP-34915](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34915) | D + E — friendly lists + conversations |
 | [DEVELOP-34913](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34913) | F + G — client defaults + `aiRiskEngines` |
+
+Related (Relates on the epic — same failure class, not this SDK's
+runtime work):
+
+| Ticket | Why it matters here |
+|---|---|
+| [DEVELOP-34251](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34251) | Connector-policy **partial** updates: omitted fields flip to bad defaults — same get-merge-post need |
+| [DEVELOP-32482](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-32482) | Connector-policy API side effect: Enable Local PAC Server flips on update |
+| [DEVELOP-29824](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-29824) | ZT Resource Policy PUT/POST **docs** gap (platform docs; ownership unchanged) |
 
 ---
 
@@ -143,7 +153,9 @@ await client.policies.patchResourcePolicySettings(customCategoryId, {
   aiRiskEngines: "all",
   linkPolicyToAllSubjects: 1,
   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
-  monitoringMessage: "AI use is monitored.",
+  aiRiskMonitoringMessage: "AI use is monitored.",
+  aiRiskMonitoringMessageEnabled: 1,
+  aiRiskMonitoringMessageTitle: "Warning",
 });
 ```
 
@@ -158,38 +170,183 @@ Do not invent a second write path for bitmaps. `setDestination` /
 `patchResourcePolicySettings` that only supply `destinations`.
 The merge step encodes bit 110 / `categoriesSelectedType: 0` and
 re-GETs. Reject allowlist+categories (wrong `customType`; delete
-and recreate — §3 recipe).
+and recreate — §4 recipe).
 
 ---
 
-## 2. Confirmed findings (Bug Replicator + AI Chat)
+## 2. Ground-truth wire shapes (Sep 9–10 traces)
 
-These were observed against live platform behavior. They specify
-what the §1 surface must hide. Prioritize them above the inventory
-in §6.
+Primary evidence: redacted Bug Replicator request/responses (Sep 9–10
+AI Security repro). Auth on **every** call, gateway and reporter:
+
+```
+Authorization: Token <IBOSS_API_KEY>
+User-Agent: ibossAPI
+```
+
+Placeholders: `{gateway}` = SWG node, `{reporter}` = reporter node.
+No secrets below.
+
+### 2.1 Categories-type create is fragile
+
+Intended create — **PUT** (not POST) `{gateway}/json/controls/policyLayers`:
+
+```json
+{
+  "customCategoryName": "AI Security Policy",
+  "customType": "e_custom_category_type_categories",
+  "isZtnaPrivateAccessCategory": 0,
+  "isZeroTrustResourcePolicy": 1,
+  "enterpriseOwned": 0,
+  "policyEnabled": 1,
+  "placeAtPosition": 0
+}
+```
+
+Observed failures on Sep 9 recreate attempts:
+
+- PUT body rejected: `{ "message": "Invalid entry type.", "errorCode": 0 }`
+- `POST …/policyLayers` (wrong method): `{ "message": "Access denied." }`
+
+Do not treat create as reliable from the string enum alone. Wrappers
+must use PUT, the `e_custom_category_type_categories` string, and
+verify the GET `customType` is categories-shaped (`3` or, after some
+updates, `13` — both still carried a bitmap). Allowlist GET is `1`.
+
+### 2.2 Settings POST that **stuck** (policy 1114, Sep 10)
+
+`POST {gateway}/json/controls/policyLayers/settings`
+
+Fields that persisted (re-GET matched). Full body also has **111**
+members each of `cat0..cat110` (typical `3`), `prio0..prio110` (`0`),
+`bypassSslMitm0..bypassSslMitm110` (`0`):
+
+| Field | Value that stuck |
+|---|---|
+| `customCategoryId` | `1114` |
+| `customType` / `categoryType` | `13` on this restore (`3` on an earlier good GET) |
+| `categoriesSelectedType` | **`0`** (UI “Selected Destinations”) |
+| `categories` | 400-char bitmap, **only bit 110** set (AI Services) |
+| `isZeroTrustResourcePolicy` | `1` |
+| `linkPolicyToAllSubjects` | `1` |
+| `dlpPolicyMethod` | **`2`** |
+| `policyAction` | `1` |
+| `aiRiskEnabled` | `1` |
+| `aiRiskEngines` | `"chatgpt"` (free-form string) |
+| `aiRiskMonitoringMessage` | `"Monitoring is occuring"` |
+| `aiRiskMonitoringMessageEnabled` | `1` |
+| `aiRiskMonitoringMessageTitle` | `"Warning"` |
+| `aiRiskBlockRiskyBehaviorsEnabled` / `…Secrets…` / `…SourceCodeUploads…` | `0` |
+
+POST response was `{ "message": "Successfully updated Resource Policy 'AI Security Policy'.", "saveIgnoredEntries": [] }`.
+**Still re-GET.** Empty `saveIgnoredEntries` is not proof; earlier
+attempts “succeeded” without bit 110.
+
+UI mapping: “Selected Destinations → AI Services” ==
+`categoriesSelectedType=0` + bit 110 + categories-type create enum.
+
+### 2.3 Allowlist recreate **silently drops** the bitmap
+
+`PUT …/policyLayers` with `customType: "e_custom_category_type_allowlist"`
+returned `{ "customCategoryId": 1114, "message": "Successfully added custom category. " }`.
+
+Immediate `GET …/resourcePolicies` and `GET …/policyLayers/settings`:
+
+| Field | After allowlist create |
+|---|---|
+| `customType` / `categoryType` | **`1`** |
+| `categories` | **empty** (`length: 0`, no bits) |
+| `aiRiskEnabled` | `0` (later POSTs can flip this to `1` **without** restoring the bitmap) |
+| `linkPolicyToAllSubjects` | `0` at create |
+
+AI Services destination is then **unexpressable** until DELETE +
+categories-type recreate. Typed helpers **must reject or warn**
+allowlist+categories. Do not try to patch a bitmap onto `customType: 1`.
+
+### 2.4 Governance conversations (reporter)
+
+**List**
+
+```
+GET {reporter}/ibreports/web/aiSecurityGovernance/conversations
+  ?reportingGroup=-1
+  &intervalStartTime=<epoch>
+  &intervalEndTime=<epoch>
+  &filterByIntervalTime=true
+  &sortByCriteria=SORT_BY_LAST_MESSAGE_TIME
+  &orderAscending=false
+  &currentRowNumber=1
+  &maxItemsToReturn=50
+```
+
+Envelope: `{ result: { conversations: [...], intervalStartTime, intervalEndTime } }`.
+List row (`@class`: `com.phantom.ibdao.common.AIRiskStat`) has
+`conversationId`, `topic`, `conversationPreview`, `vendor` /
+`aiVendor` / `aiVendorDisplayName` (e.g. `PERPLEXITY`), `domain`,
+`messageCount`, `blocked`, `reportId`, `filteringGroupNumber`.
+**`userRequest` and `aiResponse` are often `null` on list rows.**
+Match via `topic` / `conversationPreview` / `vendor`. Prefer
+`aiVendor`/`vendor` over parsing `domain`.
+
+**`domain` may embed vendor query strings including `accessToken` —
+always redact in SDK summaries and logs.**
+
+**Timestamps are a custom epoch** (observed values ~`1.789e12`, e.g.
+`1789012800000`), **not** plain unix-ms wall clock. Wrappers that
+accept `since`/`until` as ISO must translate; do not treat the
+numbers as `Date.now()`.
+
+**Detail** (bodies + block metadata live here):
+
+```
+GET {reporter}/ibreports/web/aiSecurityGovernance/conversations/{conversationId}
+  ?reportingGroup=-1&intervalStartTime=<epoch>&intervalEndTime=<epoch>
+  &filterByIntervalTime=true
+```
+
+Detail has `messages[]` (`user`, `blocked`, `text`, `messageTime`,
+`contentAnalysisRule`, `blockDescription`), plus `vendor: "CHAT_GPT"`
+(settings used `"chatgpt"` — **two slug systems**). ~15 minute lag
+after a chat is common.
+
+### 2.5 Auth (both hosts)
+
+`Authorization: Token <key>` **and** `User-Agent: ibossAPI` on
+gateway policy calls **and** reporter conversation calls. Omitting
+the UA is an observed agent failure mode.
+
+---
+
+## 3. Confirmed findings (Bug Replicator + AI Chat)
+
+These map §2 traces onto the §1 surface. Prioritize them above the
+inventory in §7.
 
 ### A. Policy destination encoding — highest priority
 
 | | |
 |---|---|
-| **Evidence** | Confirmed in testing (DEVELOP-34916) |
-| **Paths** | `GET/PUT/POST /json/controls/resourcePolicies` · `PUT /json/controls/policyLayers` · `GET/POST /json/controls/policyLayers/settings?customCategoryId=` |
+| **Evidence** | §2.1–2.3 traces (DEVELOP-34916 / 34918) |
+| **Paths** | `PUT /json/controls/policyLayers` · `GET/POST /json/controls/policyLayers/settings?customCategoryId=` · `GET /json/controls/resourcePolicies` |
 | **SDK today** | `createLayer` / `getLayerSettings` / `updateLayerSettings` / `emptyCategoriesBitmap()` — generate the blob, do not interpret it |
 
-**Footguns (observed).**
+**Footguns (ground truth).**
 
-- Agents must invent a ~400-character `categories` bitmap and set
-  **bit 110** for AI Services. There is no named category API.
-- `categoriesSelectedType = 0` means **Selected Destinations**. `1` is
-  the other mode. Agents invert this constantly.
-- Create takes `customType: "e_custom_category_type_categories"`
-  (string). GET returns `customType: 3` (number). Equality checks
-  against the create string fail after a round-trip.
-- Recreating the policy as an **allowlist** (`e_custom_category_type_allowlist`)
-  **silently drops** the categories bitmap. The POST can still succeed.
-- POST can return success with empty `saveIgnoredEntries` while
-  destination / AI-risk fields **do not stick**. Do not trust POST
-  success; re-GET and assert bit 110 and `categoriesSelectedType === 0`.
+- Categories **create is fragile**: PUT can return
+  `Invalid entry type`; POST to `/policyLayers` is `Access denied`.
+- Settings that **stuck** used `categoriesSelectedType=0`, 400-char
+  `categories` with **bit 110**, ~111 `catN`/`prioN`/`bypassSslMitmN`
+  families, `aiRiskEnabled`, `linkPolicyToAllSubjects`,
+  `dlpPolicyMethod=2`, plus `aiRiskMonitoringMessage*`.
+- Live `customType` after GET is numeric: **`3`** (categories) or
+  **`13`** after some updates (still categories + bitmap). Allowlist
+  is **`1`**. Create still sends the `e_custom_category_type_*` string.
+- **Allowlist-type recreate silently drops the bitmap** — GET shows
+  empty `categories`. Later settings POSTs can set `aiRiskEnabled: 1`
+  and still leave destinations empty. Agent-hostile; reject/warn
+  allowlist+categories.
+- Re-GET to verify — do not trust POST success or empty
+  `saveIgnoredEntries`. Assert bit 110 and `categoriesSelectedType===0`.
 
 **Proposed shapes (never force an agent to touch the bitmap).**
 
@@ -259,7 +416,9 @@ client.policies.patchResourcePolicySettings(id, {
   aiRiskEngines: "all",          // see G
   linkPolicyToAllSubjects: 1,
   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
-  monitoringMessage: "…",
+  aiRiskMonitoringMessage: "…",
+  aiRiskMonitoringMessageEnabled: 1,
+  aiRiskMonitoringMessageTitle: "Warning",
 });
 ```
 
@@ -287,7 +446,10 @@ client.policies.patchResourcePolicySettings(id, {
 
 **Footguns (observed).**
 
-- Step 1 alone returns success (`Successfully added custom category`)
+- Step 1 must be **PUT**; `POST /json/controls/policyLayers` returned
+  `Access denied`. PUT can still return `Invalid entry type` — create
+  is fragile (§2.1).
+- Step 1 alone can return success (`Successfully added custom category`)
   and an id. AI risk, destinations, `dlpPolicyMethod`, and
   `linkPolicyToAllSubjects` live **only** in step 2. Agents stop after
   PUT and believe the policy is done.
@@ -295,7 +457,7 @@ client.policies.patchResourcePolicySettings(id, {
   and never appear in the Resource Policy UI (Confluence write-up).
 - Wrong `customType` (allowlist/blocklist instead of categories) cannot
   be patched into a destination policy — the working recipe
-  **DELETEs** the layer and recreates (see §3).
+  **DELETEs** the layer and recreates (see §4).
 
 `createLayer({ isZeroTrustResourcePolicy: 1 })` already does the two
 HTTP calls. It does **not** return effective GET settings, does not
@@ -310,7 +472,7 @@ const policy = await client.policies.createResourcePolicy({
   aiRiskEnabled: true,
   aiRiskEngines: "all",
   linkPolicyToAllSubjects: true,
-  monitoringMessage: "…",
+  aiRiskMonitoringMessage: "…",
 });
 // → effective GET settings (summary), not just ids
 // asserts bit 110 + categoriesSelectedType === 0 + dlpPolicyMethod === 2
@@ -361,61 +523,64 @@ client.policies.listPolicies({ kind: "dlp" | "aiSecurity" | "resource" | "layer"
   `GET /json/controls/resourcePolicies?kind=dlp|aiSecurity|internet|privateAccess`.
   Do not change `/policyLayers/all`.
 - **Docs-only now:** publish the `typeFilter` / `customType` integer
-  table (9 = DLP, 3 = categories after GET, 12 = connector).
+  table (9 = DLP; GET `customType` 1 = allowlist, 3 or 13 =
+  categories, 12 = connector).
 
 ### E. AI Security Governance conversations
 
 | | |
 |---|---|
-| **Evidence** | Confirmed in testing (DEVELOP-34915) |
-| **Path** | Reporter: `GET /ibreports/web/aiSecurityGovernance/conversations` (long query string) |
-| **Related UI** | Dashboard also uses `GET /ibreports/web/reports/{id}/web/aiRisk` and `…/aiRisk/conversation` — wrap the **Governance** path agents actually hit |
+| **Evidence** | §2.4 traces (DEVELOP-34915) |
+| **List** | `GET {reporter}/ibreports/web/aiSecurityGovernance/conversations?reportingGroup=-1&intervalStartTime=&intervalEndTime=&filterByIntervalTime=true&sortByCriteria=SORT_BY_LAST_MESSAGE_TIME&orderAscending=false&currentRowNumber=1&maxItemsToReturn=50` |
+| **Detail** | `GET {reporter}/ibreports/web/aiSecurityGovernance/conversations/{conversationId}?reportingGroup=-1&intervalStartTime=&intervalEndTime=&filterByIntervalTime=true` |
 | **SDK today** | **none** |
 
-**Footguns (observed).**
+**Footguns (ground truth).**
 
-- Long, dashboard-shaped query string. Time base is unclear (report
-  clock vs wall clock vs timezone).
-- **~15 minute** eventual consistency: a conversation that just
-  happened is often missing. Agents conclude "logging is broken".
-- List rows frequently have **null** `userRequest` / `aiResponse`.
-  Bodies exist on the detail fetch, not the list.
-- `domain` sometimes embeds session/vendor **tokens**. Must redact
-  before logging or returning to a model.
+- Long query string as above. **`intervalStartTime` / `intervalEndTime`
+  use a custom epoch (~`1.789e12`), not plain unix-ms.** ISO
+  `since`/`until` must be translated; `new Date(1789012800000)` is
+  wrong.
+- **~15 minute** lag after chat is common.
+- List rows (`AIRiskStat`) often have **null** `userRequest` /
+  `aiResponse`. Match via `topic` / `conversationPreview` / `vendor`.
+  Detail is required for `messages[]` and block metadata
+  (`contentAnalysisRule`, `blockDescription`).
+- `domain` may embed vendor query strings including **`accessToken`**.
+  Redact in SDK summaries and logs. Prefer `aiVendor`/`vendor`
+  (`PERPLEXITY`, `CHAT_GPT`) over parsing `domain`.
 
 **Proposed shapes.**
 
 ```ts
 client.reporting.listAiConversations({
-  since, until,            // ISO-8601; SDK translates the query string
-  vendor,                  // validated — see G
-  textContains,
+  since, until,            // ISO-8601; SDK maps to the custom epoch
+  vendor,                  // validated — see G; map chatgpt ↔ CHAT_GPT
+  textContains,            // match topic / conversationPreview
 });
-// list items are summaries (ids, vendor, times). Bodies may be null.
+// summaries only; userRequest/aiResponse may be null; domain redacted
 
 client.reporting.getConversation(id);
-// detail fetch; redacts tokens in domain / message fields
+// detail path above; redacts accessToken in domain; returns messages[]
 
 client.reporting.waitForConversation({ id, timeoutMs });
-// poll through the ~15m lag window; do not busy-loop
+// poll through the ~15m lag; do not busy-loop
 ```
 
-- All three: **SDK wrapper** over
-  `/ibreports/web/aiSecurityGovernance/conversations` (and the
-  detail/get that testing used). Route to the **reporter** host.
+- All three: **SDK wrapper** over the Governance paths, **reporter**
+  host, same auth headers as F.
 - **New HTTP sibling (later):**
-  `GET /ibreports/web/aiConversations` and
-  `GET /ibreports/web/aiConversations/{id}` with ISO `since`/`until`
-  and bodies-on-get. Keep the Governance path unchanged.
-- **Docs-only now:** eventual consistency (~15m), "list bodies are
-  null — call get", redact `domain`.
+  `GET /ibreports/web/aiConversations` + `/{id}` with ISO times and
+  bodies-on-get. Keep the Governance path unchanged.
+- **Docs-only now:** custom epoch, ~15m lag, null list bodies, redact
+  `accessToken`.
 
 ### F. Auth + split-brain hosts
 
 | | |
 |---|---|
-| **Evidence** | Confirmed in testing (DEVELOP-34913) |
-| **Need** | `Authorization: Token <key>` **and** `User-Agent: ibossAPI` on every request (GETs included, plus XSRF cookies) |
+| **Evidence** | §2.5 traces (DEVELOP-34913) |
+| **Need** | `Authorization: Token <key>` **and** `User-Agent: ibossAPI` on **gateway and reporter** (GETs included, plus XSRF cookies) |
 | **Routing** | Policy writes → **gateway** (`/json/…`). Conversations → **reporter** (`/ibreports/…`). Cloud (`/ibcloud/web/…`) often `access.denied` with the **same** key that works on gateway. |
 
 **Footguns (observed).**
@@ -455,8 +620,8 @@ client.raw(method, path, opts);  // infer tier from /json vs /ibreports vs /ibcl
 
 | | |
 |---|---|
-| **Evidence** | Confirmed in testing (DEVELOP-34913) |
-| **Wire** | Free-form string. Observed as `"chatgpt"` while testing **many** vendors. Other vendor strings are easy to invent and fail late or silently. |
+| **Evidence** | §2.2 / §2.4 traces (DEVELOP-34913) |
+| **Wire** | Settings: free-form `"chatgpt"`. Conversation list/detail: `"PERPLEXITY"`, `"CHAT_GPT"` (different slug system). |
 
 **Proposed shape.**
 
@@ -466,25 +631,24 @@ type AiRiskEngine =
   | "claude"
   | "gemini"
   | "copilot"
-  | "perplexity"; // publish the live list from the platform; do not guess in agents
+  | "perplexity"; // publish the live list; do not guess
 
 aiRiskEngines: "all" | AiRiskEngine[];
 ```
 
 - Validation + `"all"` expansion: **SDK wrapper** on
   `createResourcePolicy` / `patchResourcePolicySettings`. Unknown
-  values throw **before** the POST. Wire can still send the
-  comma-string / platform form the gateway expects.
-- **New HTTP:** none required. If the platform later accepts an
-  array, that is additive.
-- **Docs-only now:** `"chatgpt"` is the observed token; do not
-  send display names (`"ChatGPT"`). Confirm the remaining slugs
-  against the product list when implementing — do not treat the
-  union above as final.
+  values throw **before** the POST. Wire still sends the
+  platform string (`"chatgpt"` observed).
+- Conversation wrappers map `chatgpt` ↔ `CHAT_GPT`, `perplexity` ↔
+  `PERPLEXITY` so agents use one enum.
+- **New HTTP:** none required.
+- **Docs-only now:** do not send display names (`"ChatGPT"`). The
+  union above is **not** final — confirm slugs when implementing.
 
 ---
 
-## 3. Working recipe (migration / example)
+## 4. Working recipe (migration / example)
 
 This is the sequence agents eventually used to get an AI Security
 Resource Policy that **actually persisted**. Document it so raw-HTTP
@@ -493,24 +657,29 @@ The §1 surface (`createResourcePolicy`, `patchResourcePolicySettings`,
 `setDestination`) implements this ritual so agents stop performing it
 by hand.
 
-1. **DELETE** the existing AI Security layer if it has the wrong
-   `customType` (allowlist/blocklist). Destination bits cannot be
-   patched onto that type; recreate as categories.
-2. **PUT** `/json/controls/policyLayers` with
+1. **DELETE** the existing AI Security layer if GET `customType` is
+   `1` (allowlist) or otherwise not categories-shaped (`3` or `13`).
+   Bitmap cannot be patched onto allowlist.
+2. **PUT** `/json/controls/policyLayers` (not POST — POST was
+   `Access denied`) with
    `customType: "e_custom_category_type_categories"` and
-   `isZeroTrustResourcePolicy: 1`.
+   `isZeroTrustResourcePolicy: 1`. If the body returns
+   `Invalid entry type`, do not proceed; retry with the string enum
+   above, never a numeric `3`/`13` on create.
 3. **POST** `/json/controls/policyLayers/settings` with at least:
    - `dlpPolicyMethod: 2`
    - `aiRiskEnabled: 1`
-   - monitoring message
+   - `aiRiskEngines: "chatgpt"` (or the intended slug)
+   - `aiRiskMonitoringMessage` / `…Enabled` / `…Title`
    - `linkPolicyToAllSubjects: 1`
    - `categoriesSelectedType: 0`
    - `categories` bitmap with **bit 110** set
-   - generated families: `cat0..cat110`, `prio0..prio110`,
-     `bypassSslMitm0..bypassSslMitm110`
+   - **111** members each: `cat0..cat110` (typical `3`),
+     `prio0..prio110` (`0`), `bypassSslMitm0..bypassSslMitm110` (`0`)
 4. **Re-GET** `/json/controls/policyLayers/settings?customCategoryId=`
-   and **assert** bit 110 is set and `categoriesSelectedType === 0`.
-   Do **not** trust POST success (including empty `saveIgnoredEntries`).
+   and **assert** bit 110 is set, `categoriesSelectedType === 0`,
+   and `customType` is `3` or `13` (not `1`). Do **not** trust POST
+   success (including empty `saveIgnoredEntries`).
 
 `createResourcePolicy` + `setDestination` + `patchResourcePolicySettings`
 are this recipe behind one call each. `createLayer` / `updateLayerSettings`
@@ -518,7 +687,7 @@ remain for callers who still want the raw two-step.
 
 ---
 
-## 4. Remedy map (confirmed items + epic surface)
+## 5. Remedy map (confirmed items + epic surface)
 
 | Item | Additive SDK wrapper | New HTTP sibling (optional) | Docs-only |
 |---|---|---|---|
@@ -535,7 +704,7 @@ dedicated Resource Policy noun is additive (§1).
 
 ---
 
-## 5. SDK inventory
+## 6. SDK inventory
 
 ### What this repo is
 
@@ -635,7 +804,7 @@ verify-after-write, and unwrapped reporter Governance — not transport.
 
 ---
 
-## 6. Additional inventory (not confirmed in that test pass)
+## 7. Additional inventory (not confirmed in that test pass)
 
 Useful, lower priority than A–G. Do not start here.
 
@@ -709,7 +878,7 @@ XSRF/session (`IbossApiError`, not `IbossXsrfError`). Do not reclassify
 
 ---
 
-## 7. Proposed agent surface (additive)
+## 8. Proposed agent surface (additive)
 
 All names are new. Old symbols remain. Dedicated Resource Policy
 read/UPDATE first (epic), then destinations (confirmed), then the rest.
@@ -726,7 +895,7 @@ client.policies.createResourcePolicy({
   aiRiskEnabled,
   aiRiskEngines,          // G: "all" | string[]
   linkPolicyToAllSubjects,
-  monitoringMessage,
+  aiRiskMonitoringMessage,
 }) // PUT + POST + re-GET; returns effective settings
 
 // A — destinations; implemented as a patch of { destinations }
@@ -766,22 +935,25 @@ Until those exist, SDK methods call today's paths
 
 ---
 
-## 8. What we will not do in follow-up slices
+## 9. What we will not do in follow-up slices
 
 - Rename or remove `getLayerSettings`, `updateLayerSettings`,
   `createLayer`, `listLayers`, `listResourcePolicies`, `createPeer`,
   `associateResources`, or any existing path.
-- Change the working-recipe paths in §3 — wrappers hide them; they stay.
+- Change the working-recipe paths in §4 — wrappers hide them; they stay.
 - Require OpenAPI generation as a blocker.
 - Put API keys in chat, docs, tests, or examples (placeholders only).
 - Change 403-on-GET from `IbossApiError` to `IbossXsrfError`.
 - Collapse the four policy types onto one new path; we **split** them
   for agents while the wire family stays shared.
 - Treat POST settings success as persistence (wrappers re-GET).
+- Replace or remove
+  `GET /json/controls/policyLayers/settings?customCategoryId=` —
+  the dedicated Resource Policy GET is a **sibling**, not a rename.
 
 ---
 
-## 9. Next implementation slices
+## 10. Next implementation slices
 
 Kickoff order is the **epic surface** plus the confirmed destination
 footgun. Each slice is independently mergeable and non-breaking.
@@ -811,11 +983,16 @@ footgun. Each slice is independently mergeable and non-breaking.
 5. **F + G — Client defaults + engines** (DEVELOP-34913) —
    `fromEnv` / `fromProfile`, `raw()` tier inference, validated
    `aiRiskEngines: "all" | string[]`. Small; can ship beside 1–2.
-6. **Inventory follow-ups** (§6) — PAC / proxy / SSL / groups patch
+6. **Inventory follow-ups** (§7) — PAC / proxy / SSL / groups patch
    pairs, `attachResources`, reporting `reportId` resolution. After A–G.
+   Connector partial-update side effects are the same class
+   ([DEVELOP-34251](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34251),
+   [DEVELOP-32482](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-32482)).
 7. **Docs pass** — "Agent quick path" on `resource-policies.md`,
    `policy-layers.md`, `reporting-and-logs.md`, `errors-and-gotchas.md`
-   once symbols exist. This PR is the proposal + the §3 recipe.
+   once symbols exist. Align with
+   [DEVELOP-29824](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-29824)
+   (ZT RP docs). This PR is the proposal + the §4 recipe.
 
 Recommended first **code** PR: **slice 1** (dedicated get +
 get-merge-post UPDATE) with **slice 2** destinations on top, tests
@@ -825,19 +1002,29 @@ if agents will live-test.
 
 ---
 
-## 10. Sources
+## 11. Sources
 
 - **Epic (authoritative):** DEVELOP-34912 description — settings are
   fetched via `GET /json/controls/policyLayers/settings?customCategoryId=`
   instead of a dedicated Resource Policy API; add UPDATE that pulls
   existing JSON, merges the patch, and sends the normal POST.
+- **Ground truth:** redacted Sep 9–10 Bug Replicator traces
+  (`DEVELOP-34912-api-shapes-redacted.md`) — categories create
+  fragility (`Invalid entry type` / POST `Access denied`), settings
+  that stuck (cst=0, bit 110, 111× families, `aiRiskEnabled`,
+  `linkPolicyToAllSubjects`, `dlpPolicyMethod=2`), allowlist empty
+  bitmap, Governance list/detail query + custom epoch ~`1.789e12` +
+  null list bodies + `accessToken` in `domain`, auth headers on both
+  hosts.
 - **Confirmed:** Bug Replicator + AI Chat testing folded into
-  DEVELOP-34912 (comment) and children 34913–34916. Destination bitmap,
+  DEVELOP-34912 (comment) and children 34913–34918. Destination bitmap,
   inverted `categoriesSelectedType`, string-vs-numeric `customType`,
   allowlist drop, `saveIgnoredEntries` false success, two-step create,
   `typeFilter=9`, `/ibreports/web/aiSecurityGovernance/conversations`
   lag/null-bodies/token-in-domain, gateway-vs-reporter-vs-cloud,
   `aiRiskEngines: "chatgpt"`.
+- **Relates:** DEVELOP-34251, DEVELOP-32482 (partial-update side
+  effects), DEVELOP-29824 (ZT RP docs).
 - This repo: `packages/sdk/src/api/*`, `packages/sdk/src/client/*`,
   `docs/api/*`, `docs/ARCHITECTURE.md`, `AGENTS.md`.
 - [Resource Policies and the API](https://ibosscybersecurity.atlassian.net/wiki/spaces/~649395834/pages/4007690273/Resource+Policies+and+the+API)
