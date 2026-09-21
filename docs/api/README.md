@@ -24,6 +24,10 @@ gotchas.
 | [reporting-and-logs.md](reporting-and-logs.md) | Reporting | `client.reporting` | drill-down reports, URL logs, incident settings |
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
 
+Cross-cutting proposal (discovery only; no runtime changes yet):
+[Agent-friendly APIs](../agent-apis.md) — inventory, agent-hostile
+endpoints, and non-breaking remedies for [DEVELOP-34912](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34912).
+
 ## The four policy types (they look similar on the wire)
 
 All four are created through the same gateway endpoints

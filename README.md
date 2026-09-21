@@ -483,6 +483,7 @@ tested without touching a live tenant. To wrap a new endpoint, follow
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | full workflow authoring reference |
 | [docs/api/README.md](docs/api/README.md) | endpoint reference index (12 feature areas) |
 | [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md) | status semantics, host routing, platform behaviors |
+| [docs/agent-apis.md](docs/agent-apis.md) | agent-API findings and non-breaking design (DEVELOP-34912) |
 | [workflows/README.md](workflows/README.md) | quick workflow authoring guide |
 
 Requirements: Node.js 18.14 or later, and an iboss Zero Trust SSE account
