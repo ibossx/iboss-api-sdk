@@ -71,7 +71,7 @@ SDK wrappers ship first and later become thin clients of a sibling path.
 ## 1. Product direction (epic — authoritative)
 
 Two requirements from the DEVELOP-34912 description. Treat them as
-the shape of the dedicated surface; §2 is why agents cannot use
+the shape of the dedicated surface; §2–§3 are why agents cannot use
 today's Policy Layers settings URL safely.
 
 ### 1.1 Today: settings live on Policy Layers, not Resource Policies
@@ -116,7 +116,7 @@ only what is changed, which pulls the existing JSON, combines with
 the patched, and sends it to the normal POST call.*
 
 This is the remedy for the `cat0..cat110` / `prio0..prio110` /
-`bypassSslMitm0..bypassSslMitm110` round-trip (confirmed in §2.B).
+`bypassSslMitm0..bypassSslMitm110` round-trip (confirmed in §2.2 / §3.B).
 Agents send **only the fields they intend to change**. The
 implementation — SDK first, gateway sibling later — does:
 
@@ -131,7 +131,7 @@ implementation — SDK first, gateway sibling later — does:
              + if this is a Resource Policy: dlpPolicyMethod = 2
                unless the patch explicitly sets it
              + if patch.destinations is set: encode bitmap +
-               categoriesSelectedType (see §2.A); never require the
+               categoriesSelectedType (see §2.2 / §3.A); never require the
                agent to send `categories` / cat* / prio* / bypass*
 4. POST /json/controls/policyLayers/settings   body = next
         (or POST …/resourcePolicies/settings — same contract)
