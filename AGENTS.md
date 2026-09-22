@@ -85,13 +85,39 @@ examples/                  small runnable library scripts
   (`/ibcloud/web/...`), gateway node (`/json/...`), reporter node
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
-  `client.policies.createLayer()` wraps it — don't hand-roll it.
+  `client.policies.createLayer()` wraps it and still returns ids only.
+  Agents creating Resource Policies should use
+  `createResourcePolicy()` (DEVELOP-34926) which re-GETs effective
+  settings. Don't hand-roll the two-step.
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
-  lacks the module; check `ctx.account.subscriptionFlags`). See
-  [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
-- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)`.
-  To wrap a new endpoint properly, follow the `add-api-client` skill.
+  lacks the module; check `ctx.account.subscriptionFlags`),
+  `IbossVerifyError` (write reported success but re-GET did not persist),
+  `IbossPolicyTypeError` (allowlist/blocklist cannot express destinations).
+  See [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
+- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)` or
+  `client.raw(method, path)` (tier inferred from `/json` vs `/ibreports`
+  vs `/ibcloud`). To wrap a new endpoint properly, follow the
+  `add-api-client` skill.
+- **Agent Resource Policy helpers:** `IbossClient.fromEnv()` /
+  `fromProfile()`; `getResourcePolicySettings` /
+  `patchResourcePolicySettings` (DEVELOP-34924: `transport: "auto"` is
+  native PATCH → 404/405 get-merge-full-POST; POST `?merge=1` is
+  `transport: "merge-post"` opt-in only); `putResourcePolicyDestinations`
+  / `getResourcePolicyDestinations` / `setDestination` /
+  `ensureAiSecurityDestination` (AI_SERVICES → bit 110; allowlist +
+  categories reject/warn, never silent drop); `createResourcePolicy`
+  returns the verified re-GET shape. See docs/api/resource-policies.md.
+- **`listPolicies({ kind })`:** purpose-named policy query
+  (DEVELOP-34927). Do not guess `typeFilter=9` or choose between
+  `resourcePolicies` and `policyLayers/all`. Helpers:
+  `listDlpPolicies` / `listAiSecurityPolicies`. See
+  [docs/api/policies-by-kind.md](docs/api/policies-by-kind.md).
+- **AI Governance conversations:** `client.governance.listAiConversations`
+  / `getAiConversation` (DEVELOP-34930). UTC intervals, ~15m reporter
+  lag, `textContains` / vendor filtered in the SDK, domains and bodies
+  redacted. Separate from policy-kind lists. See
+  [docs/api/ai-governance-conversations.md](docs/api/ai-governance-conversations.md).
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.

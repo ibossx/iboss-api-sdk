@@ -9,7 +9,8 @@ gotchas.
 |---|---|---|---|
 | [authentication.md](authentication.md) | (API keys: admin console key management) | — | API keys, connect()/discovery, rotation, password login |
 | [accounts-and-clusters.md](accounts-and-clusters.md) | Account settings, Cloud Health | `client.account` | accounts, key expiry/rotation, preferences, clusters/nodes |
-| [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association |
+| [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association; sparse GET/PATCH settings; typed destinations; one-shot `createResourcePolicy` |
+| [policies-by-kind.md](policies-by-kind.md) | (all four policy consoles) | `client.policies` | `listPolicies({ kind })` purpose-named query (`dlp`, `aiSecurity`, `resource`, `layer`, `connector`, `privateAccess`) |
 | [private-access-policies.md](private-access-policies.md) | Secure Access Policies → Private Access Policies | `client.network`, `client.policies` | ZTNA: routed policies, routed peers, private access general settings |
 | [policy-layers.md](policy-layers.md) | Secure Access Policies → Policy Layers | `client.policies` | overlay policy layers linked to default policy groups |
 | [default-policy-groups.md](default-policy-groups.md) | Secure Access Policies → Default Policies | `client.groups`, `client.apps` | default policy groups (names, settings) and per-group web controls |
@@ -22,6 +23,7 @@ gotchas.
 | [dlp.md](dlp.md) | DLP | `client.dlp` | content analysis rules, DLP responses, converters |
 | [users-and-devices.md](users-and-devices.md) | Resources, Users & Assets | `client.directory` | static proxy users and devices |
 | [reporting-and-logs.md](reporting-and-logs.md) | Reporting | `client.reporting` | drill-down reports, URL logs, incident settings |
+| [ai-governance-conversations.md](ai-governance-conversations.md) | AI Security Dashboard → Conversations | `client.governance` | AI Governance conversation list/get (reporter; ~15m lag; redaction) |
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
 
 ## The four policy types (they look similar on the wire)
@@ -54,5 +56,22 @@ console. The distinguishing fields:
 - **List envelopes** — gateway lists usually return
   `{ entries: [...], totalCount }`; cloud lists return bare arrays or
   `{ successful, result }`. Sub-clients normalize to plain arrays.
-- **Escape hatch** — `client.raw(tier, method, path, { query, body })` or
-  `npx iboss api <METHOD> <path> [--host tier]` for anything not wrapped.
+- **Escape hatch** — `client.raw(tier, method, path, { query, body })`,
+  `client.raw(method, path)` (tier inferred from `/json` / `/ibreports` /
+  `/ibcloud`), or `npx iboss api <METHOD> <path> [--host tier]` for
+  anything not wrapped.
+
+Prefer `listPolicies({ kind })` over guessing `typeFilter=9` or choosing
+between `resourcePolicies` and `policyLayers/all`. See
+[policies-by-kind.md](policies-by-kind.md).
+
+## Agent-friendly Resource Policy helpers
+
+See [resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
+for `fromEnv` / `getResourcePolicySettings` / `patchResourcePolicySettings`
+(`transport: "auto"` = native PATCH → 404/405 get-merge-full-POST; POST
+`?merge=1` is opt-in only) / `putResourcePolicyDestinations` /
+`createResourcePolicy` (verified re-GET). These are additive SDK wrappers
+over today's `GET/POST /json/controls/policyLayers/settings`
+(DEVELOP-34913 / 34914 / 34916 / 34921 / 34924 / 34925 / 34926). Existing
+methods and wire paths are unchanged.

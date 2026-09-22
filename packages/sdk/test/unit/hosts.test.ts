@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountsHostFor, baseUrlFor } from "../../src/client/hosts.js";
+import { accountsHostFor, baseUrlFor, inferHostTier } from "../../src/client/hosts.js";
 
 describe("accountsHostFor", () => {
   it("maps the production cloud to accounts.iboss.com", () => {
@@ -18,5 +18,14 @@ describe("baseUrlFor", () => {
     const hosts = { cloud: "cloud.example.invalid" };
     expect(baseUrlFor(hosts, "cloud")).toBe("https://cloud.example.invalid");
     expect(baseUrlFor(hosts, "gateway")).toBeUndefined();
+  });
+});
+
+describe("inferHostTier", () => {
+  it("maps path prefixes to gateway / reporter / cloud / accounts", () => {
+    expect(inferHostTier("/json/controls/policyLayers/settings")).toBe("gateway");
+    expect(inferHostTier("/ibreports/web/reports/lite")).toBe("reporter");
+    expect(inferHostTier("/ibcloud/web/users/mySettings")).toBe("cloud");
+    expect(inferHostTier("/ibossauth/web/tokens")).toBe("accounts");
   });
 });

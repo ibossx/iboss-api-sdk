@@ -23,6 +23,12 @@
 `mode=0` selects the DLP view of the content-analysis settings endpoint
 (`mode=1` is the malware-defense view — use `client.raw()` for that).
 
+**DLP policies** (the console policy rows, not content-analysis rules) are
+listed with `client.policies.listPolicies({ kind: "dlp" })` or
+`listDlpPolicies()`. That sends `typeFilter=9` on
+`GET /json/controls/policyLayers/all` — do not pass `typeFilter: 9`
+yourself. See [policies-by-kind.md](policies-by-kind.md).
+
 ## Creating a rule
 
 ```ts
