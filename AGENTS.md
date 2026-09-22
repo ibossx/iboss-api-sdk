@@ -86,6 +86,12 @@ examples/                  small runnable library scripts
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
   `client.policies.createLayer()` wraps it — don't hand-roll it.
+- **Policy list by purpose:** `client.policies.listPolicies({ kind:
+  "dlp" | "aiSecurity" | "resource" | "layer" | "connector" |
+  "privateAccess" })`. Do not guess `typeFilter=9` (DLP) or choose
+  between `listResourcePolicies` and `listLayers`. Kind → wire map:
+  [docs/api/policies-by-kind.md](docs/api/policies-by-kind.md).
+  `listDlpPolicies` / `listAiSecurityPolicies` compose `listPolicies`.
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
   lacks the module; check `ctx.account.subscriptionFlags`). See

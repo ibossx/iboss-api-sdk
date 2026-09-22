@@ -34,6 +34,8 @@ export interface MockState {
   /** Force 5xx on the next N matching GETs of this path (transient-failure tests). */
   failNextGets: { path: string; remaining: number } | null;
   nextLayerId: number;
+  /** Last query string on GET /json/controls/policyLayers/all (kind-filter tests). */
+  lastPolicyListQuery: Record<string, string>;
 }
 
 export function createMockState(): MockState {
@@ -45,6 +47,7 @@ export function createMockState(): MockState {
     resourceAssociations: [],
     failNextGets: null,
     nextLayerId: 100,
+    lastPolicyListQuery: {},
   };
 }
 
@@ -163,7 +166,37 @@ export function createMockIboss(state: MockState): Hono {
         if (!c.req.query("maxItems") || c.req.query("isZeroTrustLayer") === undefined) {
           return c.json({ message: "missing required pagination/filter params" }, 400);
         }
-        return c.json({ entries: state.policyLayers, totalCount: state.policyLayers.length });
+        const url = new URL(c.req.url);
+        state.lastPolicyListQuery = Object.fromEntries(url.searchParams.entries());
+        const isZt = Number(c.req.query("isZeroTrustLayer"));
+        const typeFilter = Number(c.req.query("typeFilter") ?? -1);
+        let entries = state.policyLayers;
+        if (isZt === 0) {
+          entries = entries.filter((layer) => Number(layer.isZeroTrustResourcePolicy ?? 0) !== 1);
+        } else if (isZt === 1) {
+          entries = entries.filter((layer) => Number(layer.isZeroTrustResourcePolicy ?? 0) === 1);
+        }
+        if (typeFilter !== -1 && !Number.isNaN(typeFilter)) {
+          entries = entries.filter((layer) => Number(layer.customType) === typeFilter);
+        }
+        const currentRow = Number(c.req.query("currentRow") ?? 0);
+        const maxItems = Number(c.req.query("maxItems") ?? 100);
+        const page = entries.slice(currentRow, currentRow + maxItems);
+        return c.json({ entries: page, totalCount: entries.length });
+      });
+      gateway.get("/json/controls/resourcePolicies", (c) => {
+        const entries = state.policyLayers.filter(
+          (layer) => Number(layer.isZeroTrustResourcePolicy ?? 0) === 1,
+        );
+        return c.json({ entries, totalCount: entries.length });
+      });
+      gateway.get("/json/controls/policyLayers/settings", (c) => {
+        const id = Number(c.req.query("customCategoryId"));
+        const settings = [...state.layerSettings]
+          .reverse()
+          .find((row) => Number(row.customCategoryId) === id);
+        if (!settings) return c.json({ message: "not found" }, 404);
+        return c.json(settings);
       });
       gateway.put("/json/controls/resourcePolicy/resources", async (c) => {
         const customCategoryId = c.req.query("customCategoryId");

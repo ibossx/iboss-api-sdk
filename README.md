@@ -482,6 +482,7 @@ tested without touching a live tenant. To wrap a new endpoint, follow
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | host tiers, auth and discovery, cookies/XSRF, retries |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | full workflow authoring reference |
 | [docs/api/README.md](docs/api/README.md) | endpoint reference index (12 feature areas) |
+| [docs/api/policies-by-kind.md](docs/api/policies-by-kind.md) | agent `listPolicies({ kind })` + kind → wire-filter table |
 | [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md) | status semantics, host routing, platform behaviors |
 | [workflows/README.md](workflows/README.md) | quick workflow authoring guide |
 

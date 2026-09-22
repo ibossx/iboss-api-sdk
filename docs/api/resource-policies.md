@@ -44,8 +44,8 @@ both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 
 | Endpoint | SDK method |
 |---|---|
-| `GET /json/controls/resourcePolicies` | `listResourcePolicies()` |
-| `GET /json/controls/policyLayers/all?isZeroTrustLayer=1&...` | `listLayers({ isZeroTrustLayer: 1 })` |
+| `GET /json/controls/resourcePolicies` | `listResourcePolicies()` (raw) or **`listPolicies({ kind: "resource" \| "aiSecurity" })`** |
+| `GET /json/controls/policyLayers/all?isZeroTrustLayer=1&...` | `listLayers({ isZeroTrustLayer: 1 })` — prefer `listPolicies` for agents |
 | create (two-step) | `createLayer({ isZeroTrustResourcePolicy: 1, ... })` |
 | `GET /json/controls/policyLayers/settings?customCategoryId=` | `getLayerSettings(id)` |
 | `POST /json/controls/policyLayers/settings` | `updateLayerSettings(...)` |

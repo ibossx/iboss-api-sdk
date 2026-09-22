@@ -63,6 +63,24 @@ export {
   type PolicyLayerType,
   type CreateLayerResult,
 } from "./api/policies.js";
+export {
+  POLICY_KINDS,
+  POLICY_KIND_ALIASES,
+  POLICY_KIND_FILTERS,
+  POLICY_KIND_ALL_FILTER,
+  POLICY_TYPE_FILTER,
+  POLICY_CUSTOM_TYPE,
+  classifyPolicyKind,
+  resolvePolicyKind,
+  toPolicySummary,
+  toPolicyList,
+  type PolicyKind,
+  type PolicyKindInput,
+  type PolicyKindWireFilter,
+  type PolicyList,
+  type PolicyListKind,
+  type PolicySummary,
+} from "./api/policyKinds.js";
 export type { PacZone, PrivateNetwork } from "./api/locations.js";
 export type { ZeroTrustResource, ListResourcesOptions } from "./api/resources.js";
 export type { FirewallRule } from "./api/firewall.js";

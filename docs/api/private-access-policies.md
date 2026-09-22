@@ -80,6 +80,8 @@ const policy = await client.policies.createLayer({
 });
 ```
 
-List them with `client.policies.listResourcePolicies()` (routed policies
-appear alongside the SaaS & Internet Access Policies; the `ztnaFlowPeerIds`
-field distinguishes them).
+List them with `client.policies.listPolicies({ kind: "privateAccess" })`
+(filters `ztnaFlowPeerIds` / `isZtnaPrivateAccessCategory` on
+`listResourcePolicies()`). The raw `listResourcePolicies()` path is
+unchanged and still mixes routed policies with SaaS & Internet Access
+Policies.

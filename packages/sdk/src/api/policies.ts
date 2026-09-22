@@ -20,7 +20,18 @@
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
  * (createLayer adds it when isZeroTrustResourcePolicy: 1).
  */
+import { IbossApiError, IbossError } from "../client/errors.js";
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
+import {
+  hasAiSecuritySignal,
+  isFinitePolicyId,
+  POLICY_KIND_FILTERS,
+  POLICY_TYPE_FILTER,
+  resolvePolicyKind,
+  toPolicyList,
+  type PolicyKindInput,
+  type PolicyList,
+} from "./policyKinds.js";
 
 export type PolicyLayerType = "blocklist" | "allowlist" | "categories";
 
@@ -86,11 +97,13 @@ export class PoliciesApi extends SubClient {
    * actual listing mechanism — there is no single-page "all" response).
    *
    * Filters: `isZeroTrustLayer` -1 = both, 0 = gateway layers only, 1 =
-   * resource policies only; `typeFilter` -1 = all types.
+   * resource policies only; `typeFilter` -1 = all types (**9 = DLP**).
+   * Agents should prefer `listPolicies({ kind })` over these integers.
    */
   async listLayers(opts?: {
     isZeroTrustLayer?: -1 | 0 | 1;
     typeFilter?: number;
+    signal?: AbortSignal;
   }): Promise<PolicyLayer[]> {
     const pageSize = 100;
     const all: PolicyLayer[] = [];
@@ -116,6 +129,7 @@ export class PoliciesApi extends SubClient {
             portFilter: "",
             usernameFilter: "",
           },
+          signal: opts?.signal,
         },
       );
       const entries = result?.entries ?? [];
@@ -281,6 +295,121 @@ export class PoliciesApi extends SubClient {
         },
       },
     });
+  }
+
+  /**
+   * Purpose-named list (DEVELOP-34927 / 34915). Prefer this over guessing
+   * `typeFilter=9` or choosing between `listResourcePolicies` and
+   * `listLayers`. Legacy list methods are unchanged.
+   *
+   * ```ts
+   * const dlp = await client.policies.listPolicies({ kind: "dlp" });
+   * const ai = await client.policies.listPolicies({ kind: "aiSecurity" });
+   * ```
+   *
+   * Returns a stable `{ kind, items, total, filter }` envelope. See
+   * `POLICY_KIND_FILTERS` / docs/api/policies-by-kind.md for the kind →
+   * wire mapping.
+   */
+  async listPolicies(opts: {
+    kind: PolicyKindInput;
+    /**
+     * When listing `aiSecurity`, GET settings for rows that omit
+     * `aiRiskEnabled` / `aiRiskEngines`. Default true for that kind only.
+     */
+    inspectSettings?: boolean;
+    signal?: AbortSignal;
+  }): Promise<PolicyList> {
+    let kind: ReturnType<typeof resolvePolicyKind>;
+    try {
+      kind = resolvePolicyKind(opts.kind);
+    } catch (error) {
+      throw new IbossError(error instanceof Error ? error.message : String(error));
+    }
+
+    const rows = await this.collectPoliciesForKind(kind, opts.signal);
+    const inspect =
+      opts.inspectSettings ?? kind === "aiSecurity";
+    const enriched =
+      inspect && kind === "aiSecurity"
+        ? await this.inspectAiSecuritySignals(rows, opts.signal)
+        : rows;
+    return toPolicyList(kind, enriched);
+  }
+
+  /** DEVELOP-34915 helper — composes `listPolicies({ kind: "dlp" })`. */
+  async listDlpPolicies(opts?: {
+    inspectSettings?: boolean;
+    signal?: AbortSignal;
+  }): Promise<PolicyList> {
+    return this.listPolicies({ kind: "dlp", ...opts });
+  }
+
+  /** DEVELOP-34915 helper — composes `listPolicies({ kind: "aiSecurity" })`. */
+  async listAiSecurityPolicies(opts?: {
+    inspectSettings?: boolean;
+    signal?: AbortSignal;
+  }): Promise<PolicyList> {
+    return this.listPolicies({ kind: "aiSecurity", ...opts });
+  }
+
+  /**
+   * Fetch the raw rows for a kind using the documented wire mapping.
+   * Resource-noun kinds fall back to `policyLayers/all?isZeroTrustLayer=1`
+   * when `/json/controls/resourcePolicies` is missing (404/405).
+   */
+  private async collectPoliciesForKind(
+    kind: ReturnType<typeof resolvePolicyKind>,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>[]> {
+    if (kind === "all") {
+      return this.listLayers({
+        isZeroTrustLayer: -1,
+        typeFilter: POLICY_TYPE_FILTER.all,
+        signal,
+      });
+    }
+    const filter = POLICY_KIND_FILTERS[kind];
+    if (filter.path === "/json/controls/policyLayers/all") {
+      return this.listLayers({
+        isZeroTrustLayer: filter.isZeroTrustLayer,
+        typeFilter: filter.typeFilter,
+        signal,
+      });
+    }
+    return this.listZeroTrustPolicies(signal);
+  }
+
+  private async listZeroTrustPolicies(signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+    try {
+      return await this.listResourcePolicies();
+    } catch (error) {
+      if (error instanceof IbossApiError && (error.status === 404 || error.status === 405)) {
+        return this.listLayers({ isZeroTrustLayer: 1, signal });
+      }
+      throw error;
+    }
+  }
+
+  private async inspectAiSecuritySignals(
+    rows: Record<string, unknown>[],
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>[]> {
+    const out: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      if (signal?.aborted) throw signal.reason ?? new Error("Aborted");
+      if (hasAiSecuritySignal(row) || !isFinitePolicyId(row)) {
+        out.push(row);
+        continue;
+      }
+      try {
+        const settings = await this.getLayerSettings(Number(row.customCategoryId ?? row.id));
+        out.push({ ...row, ...settings });
+      } catch {
+        out.push(row);
+      }
+    }
+    return out;
   }
 
   // --- Zero Trust resource policies -------------------------------------

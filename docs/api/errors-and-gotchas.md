@@ -31,7 +31,10 @@ no reporting cluster provisioned).
 - **Four policy types share one wire shape.** Resource Policies, Private
   Access routed policies, Policy Layers, and Connector Policies are all
   created through `/json/controls/policyLayers` — see the type table in
-  [README.md](README.md) for the distinguishing fields.
+  [README.md](README.md) for the distinguishing fields. Agents listing
+  them should call `client.policies.listPolicies({ kind })` rather than
+  `typeFilter=9` or picking `resourcePolicies` vs `policyLayers/all`
+  ([policies-by-kind.md](policies-by-kind.md)).
 - **Two-step policy creation.** Creating any of them is
   `PUT /json/controls/policyLayers` (structure) then
   `POST /json/controls/policyLayers/settings` (full settings). A policy

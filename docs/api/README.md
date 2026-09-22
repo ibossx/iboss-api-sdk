@@ -23,6 +23,7 @@ gotchas.
 | [users-and-devices.md](users-and-devices.md) | Resources, Users & Assets | `client.directory` | static proxy users and devices |
 | [reporting-and-logs.md](reporting-and-logs.md) | Reporting | `client.reporting` | drill-down reports, URL logs, incident settings |
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
+| [policies-by-kind.md](policies-by-kind.md) | (agent list/query) | `client.policies.listPolicies({ kind })` | purpose-named `dlp` / `aiSecurity` / `resource` / … — not `typeFilter=9` |
 
 ## The four policy types (they look similar on the wire)
 
@@ -36,6 +37,10 @@ console. The distinguishing fields:
 | Private Access Policies | [private-access-policies.md](private-access-policies.md) | resource-policy shape + `ztnaFlowPeerIds` linking to routed peers |
 | Policy Layers | [policy-layers.md](policy-layers.md) | `isZeroTrustResourcePolicy: 0`, overlay layers linked to default policy groups |
 | Connector Policies | [connector-policies.md](connector-policies.md) | `customType: 12`, platform group association |
+
+List them by purpose with `client.policies.listPolicies({ kind })` —
+see [policies-by-kind.md](policies-by-kind.md). Do not guess
+`typeFilter=9` or pick `resourcePolicies` vs `policyLayers/all`.
 
 ## Conventions (apply everywhere)
 
