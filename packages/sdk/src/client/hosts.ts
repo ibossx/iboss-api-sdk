@@ -35,3 +35,69 @@ export function baseUrlFor(hosts: HostMap, tier: HostTier): string | undefined {
   const host = hosts[tier];
   return host ? `https://${host}` : undefined;
 }
+
+const HOST_TIERS = new Set<HostTier>(["cloud", "gateway", "reporter", "rbi", "accounts"]);
+
+export function isHostTier(value: string): value is HostTier {
+  return HOST_TIERS.has(value as HostTier);
+}
+
+/**
+ * Infer the host tier from a path prefix so agents can call
+ * `client.raw("GET", "/json/...")` without naming the tier.
+ *
+ *   /json/... and /bulk/...  → gateway
+ *   /ibreports/...           → reporter
+ *   /ibossauth/...           → accounts
+ *   /ibcloud/... (default)   → cloud
+ */
+export function inferHostTier(path: string): HostTier {
+  const pathname = path.startsWith("http://") || path.startsWith("https://")
+    ? new URL(path).pathname
+    : path.startsWith("/")
+      ? path
+      : `/${path}`;
+  if (pathname.startsWith("/json/") || pathname.startsWith("/bulk/")) return "gateway";
+  if (pathname.startsWith("/ibreports/")) return "reporter";
+  if (pathname.startsWith("/ibossauth/")) return "accounts";
+  return "cloud";
+}
+
+/** Pull a hostname out of `host.example.invalid` or `https://host.example.invalid/`. */
+export function hostnameFromEnvValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    try {
+      return new URL(trimmed).hostname || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
+/** Optional gateway / reporter / rbi host overrides (normally discovered). */
+export type HostOverrides = Pick<HostMap, "gateway" | "reporter" | "rbi">;
+
+export function hostOverridesFromEnv(env: NodeJS.ProcessEnv = process.env): HostOverrides {
+  const gateway =
+    hostnameFromEnvValue(env.IBOSS_GATEWAY_HOST) ?? hostnameFromEnvValue(env.IBOSS_GATEWAY_URL);
+  const reporter =
+    hostnameFromEnvValue(env.IBOSS_REPORTER_HOST) ?? hostnameFromEnvValue(env.IBOSS_REPORTER_URL);
+  const rbi = hostnameFromEnvValue(env.IBOSS_RBI_HOST) ?? hostnameFromEnvValue(env.IBOSS_RBI_URL);
+  return {
+    ...(gateway ? { gateway } : {}),
+    ...(reporter ? { reporter } : {}),
+    ...(rbi ? { rbi } : {}),
+  };
+}
+
+export function applyHostOverrides(hosts: HostMap, overrides?: HostOverrides): HostMap {
+  if (!overrides) return hosts;
+  if (overrides.gateway) hosts.gateway = overrides.gateway;
+  if (overrides.reporter) hosts.reporter = overrides.reporter;
+  if (overrides.rbi) hosts.rbi = overrides.rbi;
+  return hosts;
+}

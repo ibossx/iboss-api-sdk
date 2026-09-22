@@ -21,13 +21,15 @@ the right host per capability:
 │  gateway node (per account)       │  │  reporter node (per account)   │
 │  /json/...                        │  │  /ibreports/web/...            │
 │  policy layers, resource policies,│  │  reports, URL logs,            │
-│  firewall, apps, DLP, SSL, proxy, │  │  incident settings             │
-│  ZTNA peers, users/devices        │  │                                │
+│  firewall, apps, DLP, SSL, proxy, │  │  incident settings,            │
+│  ZTNA peers, users/devices        │  │  AI Governance conversations   │
 └───────────────────────────────────┘  └────────────────────────────────┘
 ```
 
 Gateway/reporter (and Browser Isolation) hostnames are **never hardcoded** —
-they are discovered per account at connect time.
+they are discovered per account at connect time. Agents may pin them via
+`IBOSS_GATEWAY_HOST` / `IBOSS_REPORTER_HOST` (or the `*_URL` forms) when
+using `IbossClient.fromEnv()`; those override discovery.
 
 ## Authentication
 
