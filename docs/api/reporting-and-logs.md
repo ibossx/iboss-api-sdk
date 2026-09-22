@@ -46,3 +46,12 @@ Entries include `timestamp`, `userName`, `sourceIp`, `destinationUrl`,
 `category`, `action` ("allowed"/"blocked"), `bytesTransferred`. Page with
 `currentRowNumber`/`maxItemsToReturn` for exports; for very large pulls use
 `client.raw("reporter", "GET", path, { raw: true })` to stream the response.
+
+## AI Security Governance conversations
+
+Conversation list/get is **not** on `client.reporting`. Use
+`client.governance.listAiConversations` / `getAiConversation` — see
+[ai-governance-conversations.md](ai-governance-conversations.md). The
+legacy reporter path
+`GET /ibreports/web/aiSecurityGovernance/conversations` is unchanged and
+still reachable via `client.raw("reporter", …)`.
