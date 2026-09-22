@@ -141,6 +141,7 @@ export interface ReporterConversationQuery {
   orderAscending: false;
   currentRowNumber: number;
   maxItemsToReturn: number;
+  [key: string]: string | number | boolean;
 }
 
 const REDACTED = "[REDACTED]";
@@ -298,7 +299,8 @@ export function redactConversationUrl(value: string): string {
     for (const key of [...url.searchParams.keys()]) {
       if (QUERY_SECRET.test(key)) url.searchParams.set(key, REDACTED);
     }
-    return url.toString();
+    // URLSearchParams encodes brackets; keep the readable placeholder.
+    return url.toString().replace(/%5BREDACTED%5D/g, REDACTED);
   } catch {
     return value.replace(QUERY_PAIR, `$1${REDACTED}`);
   }
