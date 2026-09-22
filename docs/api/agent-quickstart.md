@@ -9,6 +9,7 @@ Deep dives: [resource-policies.md](resource-policies.md) (settings,
 destinations, create), [policies-by-kind.md](policies-by-kind.md),
 [ai-governance-conversations.md](ai-governance-conversations.md),
 [errors-and-gotchas.md](errors-and-gotchas.md).
+Negative paths: [agent-footguns.md](agent-footguns.md).
 
 ```ts
 import { IbossClient } from "@iboss/sdk";
@@ -154,6 +155,8 @@ last 30 days. Do not hand-roll `intervalStartTime` epochs or send this
 path to the gateway/cloud host.
 
 ## Don't
+
+Full negative-path examples: [agent-footguns.md](agent-footguns.md).
 
 | Don't | Do |
 |---|---|

@@ -32,7 +32,9 @@ When the user describes an automation they want:
 1. **Find the right APIs.** For the purpose-named agent surfaces
    (settings patch `auto`, destinations `AI_SERVICES`, create+verify,
    `listPolicies` kinds, governance conversations) start with
-   [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Then
+   [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Read
+   [docs/api/agent-footguns.md](docs/api/agent-footguns.md) before a
+   sparse POST, allowlist+categories write, or governance query. Then
    check [docs/api/README.md](docs/api/README.md) — the index maps each
    doc to its admin-console section — and the specific doc (e.g.
    [docs/api/resource-policies.md](docs/api/resource-policies.md)). The
@@ -123,6 +125,10 @@ examples/                  small runnable library scripts
   lag, `textContains` / vendor filtered in the SDK, domains and bodies
   redacted. Separate from policy-kind lists. See
   [docs/api/ai-governance-conversations.md](docs/api/ai-governance-conversations.md).
+- **Agent footguns:** Gateway wipe-on-omit POST, allowlist/blocklist +
+  categories silent drop, POST 200 / empty `saveIgnoredEntries`, magic
+  `typeFilter=9`, opaque governance epochs / ~15m lag. See
+  [docs/api/agent-footguns.md](docs/api/agent-footguns.md).
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.
