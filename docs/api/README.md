@@ -7,6 +7,7 @@ gotchas.
 
 | Doc | Admin console section | SDK methods | Covers |
 |---|---|---|---|
+| [agent-quickstart.md](agent-quickstart.md) | (agent cookbook) | purpose-named surfaces | Copy-paste: settings patch `auto`, destinations `AI_SERVICES`, create+verify, `listPolicies` kinds, governance conversations |
 | [authentication.md](authentication.md) | (API keys: admin console key management) | — | API keys, connect()/discovery, rotation, password login |
 | [accounts-and-clusters.md](accounts-and-clusters.md) | Account settings, Cloud Health | `client.account` | accounts, key expiry/rotation, preferences, clusters/nodes |
 | [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association; sparse GET/PATCH settings; typed destinations; one-shot `createResourcePolicy` |
@@ -67,7 +68,9 @@ between `resourcePolicies` and `policyLayers/all`. See
 
 ## Agent-friendly Resource Policy helpers
 
-See [resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
+Start with [agent-quickstart.md](agent-quickstart.md) (copy-paste
+TypeScript). Detail is in
+[resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
 for `fromEnv` / `getResourcePolicySettings` / `patchResourcePolicySettings`
 (`transport: "auto"` = native PATCH → 404/405 get-merge-full-POST; POST
 `?merge=1` is opt-in only) / `putResourcePolicyDestinations` /

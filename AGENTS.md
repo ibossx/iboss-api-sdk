@@ -29,9 +29,12 @@ When the user describes an automation they want:
      npx iboss init
      ```
 
-1. **Find the right APIs.** Check [docs/api/README.md](docs/api/README.md) —
-   the index maps each doc to its admin-console section — then read the
-   specific doc (e.g.
+1. **Find the right APIs.** For the purpose-named agent surfaces
+   (settings patch `auto`, destinations `AI_SERVICES`, create+verify,
+   `listPolicies` kinds, governance conversations) start with
+   [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Then
+   check [docs/api/README.md](docs/api/README.md) — the index maps each
+   doc to its admin-console section — and the specific doc (e.g.
    [docs/api/resource-policies.md](docs/api/resource-policies.md)). The
    sub-client sources in `packages/sdk/src/api/` are the ground truth for
    method signatures. Note the platform has four policy types that share one
@@ -107,7 +110,9 @@ examples/                  small runnable library scripts
   / `getResourcePolicyDestinations` / `setDestination` /
   `ensureAiSecurityDestination` (AI_SERVICES → bit 110; allowlist +
   categories reject/warn, never silent drop); `createResourcePolicy`
-  returns the verified re-GET shape. See docs/api/resource-policies.md.
+  returns the verified re-GET shape. Copy-paste:
+  [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Detail:
+  [docs/api/resource-policies.md](docs/api/resource-policies.md).
 - **`listPolicies({ kind })`:** purpose-named policy query
   (DEVELOP-34927). Do not guess `typeFilter=9` or choose between
   `resourcePolicies` and `policyLayers/all`. Helpers:
