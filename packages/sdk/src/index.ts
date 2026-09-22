@@ -80,6 +80,8 @@ export {
   destinationTypeConflict,
   prepareDestinationWrite,
   assertDestinationsExpressable,
+  assertCategoriesBitmapExpressable,
+  categoriesBitmapSelects,
   type DestinationMode,
   type DestinationSpec,
   type ResourcePolicyDestinations,

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { IbossClient } from "../../src/client/IbossClient.js";
 import { IbossPolicyTypeError, IbossVerifyError } from "../../src/client/errors.js";
-import { AI_SERVICES_BIT, isCategoryBitSet } from "../../src/api/destinations.js";
+import {
+  AI_SERVICES_BIT,
+  emptyDestinationBitmap,
+  isCategoryBitSet,
+  setCategoryBit,
+} from "../../src/api/destinations.js";
 import { CLOUD_HOST, MOCK_API_KEY } from "../mock-server/fixtures.js";
 import { createMockState, mockFetch } from "../mock-server/mockIboss.js";
 
@@ -110,6 +115,48 @@ describe("PUT resourcePolicies/{id}/destinations (DEVELOP-34925)", () => {
     expect(result.categories).toEqual([]);
     expect(state.layerSettings).toHaveLength(postsBefore);
     expect(warnings.some((w) => /silently drops/.test(w.message))).toBe(true);
+  });
+
+  it("throws before settings POST when allowlist is combined with bit 110", async () => {
+    const { client, state } = makeClient();
+    const bitmap = setCategoryBit(emptyDestinationBitmap(), AI_SERVICES_BIT);
+
+    await expect(
+      client.policies.createLayer({
+        name: "Doomed allowlist",
+        type: "allowlist",
+        isZeroTrustResourcePolicy: 1,
+        settings: { categories: bitmap, categoriesSelectedType: 0 },
+      }),
+    ).rejects.toBeInstanceOf(IbossPolicyTypeError);
+    expect(state.policyLayers).toHaveLength(0);
+    expect(state.layerSettings).toHaveLength(0);
+
+    const layer = await client.policies.createLayer({
+      name: "Existing allowlist",
+      type: "allowlist",
+      isZeroTrustResourcePolicy: 1,
+    });
+    const postsBefore = state.layerSettings.length;
+    await expect(
+      client.policies.updateLayerSettings({
+        customCategoryId: layer.customCategoryId,
+        customCategoryNumber: layer.customCategoryNumber,
+        customCategoryName: "Existing allowlist",
+        categories: bitmap,
+        categoriesSelectedType: 0,
+      }),
+    ).rejects.toBeInstanceOf(IbossPolicyTypeError);
+    expect(state.layerSettings).toHaveLength(postsBefore);
+
+    await expect(
+      client.policies.patchResourcePolicySettings(
+        layer.customCategoryId,
+        { categories: bitmap, categoriesSelectedType: 0 },
+        { transport: "get-merge-post" },
+      ),
+    ).rejects.toBeInstanceOf(IbossPolicyTypeError);
+    expect(state.layerSettings).toHaveLength(postsBefore);
   });
 
   it("throws IbossVerifyError when POST succeeds but bit 110 does not persist", async () => {

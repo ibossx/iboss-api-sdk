@@ -67,6 +67,11 @@ describe("client.governance conversations (reporter)", () => {
     expect(listed.items[0]!.domain).not.toContain("not-a-real-access-token-value");
     expect(listed.filter.since).toBe(SINCE);
     expect(listed.interval.startMs).toBe(Date.parse(SINCE));
+    expect(state.lastAiConversationQuery?.since).toBeUndefined();
+    expect(state.lastAiConversationQuery?.until).toBeUndefined();
+    expect(state.lastAiConversationQuery?.intervalStartTime).toBe(String(Date.parse(SINCE)));
+    expect(state.lastAiConversationQuery?.intervalEndTime).toBe(String(Date.parse(UNTIL)));
+    expect(state.lastAiConversationQuery?.filterByIntervalTime).toBe("true");
 
     const listCall = state.requests.find((r) =>
       r.includes("/ibreports/web/aiSecurityGovernance/conversations"),
@@ -152,6 +157,38 @@ describe("client.governance conversations (reporter)", () => {
         sleep: async () => {},
       }),
     ).rejects.toThrow(/15 minutes lag/i);
+  });
+
+  it("rewrites Date and unix-ms since/until onto interval params", async () => {
+    const state = createMockState();
+    const client = makeClient(state);
+    const sinceMs = Date.parse("2026-09-10T04:00:00.000Z");
+    const until = new Date("2026-09-11T04:00:00.000Z");
+    await client.governance.listAiConversations({ since: sinceMs, until });
+    expect(state.lastAiConversationQuery?.since).toBeUndefined();
+    expect(state.lastAiConversationQuery?.until).toBeUndefined();
+    expect(state.lastAiConversationQuery?.intervalStartTime).toBe(String(sinceMs));
+    expect(state.lastAiConversationQuery?.intervalEndTime).toBe(String(until.getTime()));
+    expect(state.lastAiConversationQuery?.filterByIntervalTime).toBe("true");
+  });
+
+  it("passes intervalStartTime/intervalEndTime through and rejects raw since on the wire", async () => {
+    const state = createMockState();
+    const client = makeClient(state);
+    await client.governance.listAiConversations({
+      intervalStartTime: 1_789_012_800_000,
+      intervalEndTime: 1_789_099_200_000,
+      filterByIntervalTime: true,
+    });
+    expect(state.lastAiConversationQuery?.intervalStartTime).toBe("1789012800000");
+    expect(state.lastAiConversationQuery?.intervalEndTime).toBe("1789099200000");
+    expect(state.lastAiConversationQuery?.since).toBeUndefined();
+
+    await expect(
+      client.raw("reporter", "GET", "/ibreports/web/aiSecurityGovernance/conversations", {
+        query: { since: "2026-09-10T04:00:00.000Z", until: 1_789_012_800_000 },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("rejects unknown vendors before calling the reporter", async () => {

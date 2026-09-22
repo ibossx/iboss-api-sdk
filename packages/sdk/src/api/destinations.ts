@@ -14,6 +14,13 @@
  *
  * Wire today is still GET/POST `/json/controls/policyLayers/settings`. Legacy
  * `categories` / `categoriesSelectedType` fields remain for old clients.
+ *
+ * Allowlist (customType 1 / `e_custom_category_type_allowlist`, and the same
+ * mode under `destinationMode` or `categoryType`) plus a non-empty categories
+ * bitmap does **not** fail on the wire. Gateway POST returns 200 and silently
+ * drops the bitmap (`categories` length 0), including AI Services bit 110.
+ * Confirmed on test-gateway-14800 (2026-09-22). `assertCategoriesBitmapExpressable`
+ * is the guard — it throws `IbossPolicyTypeError` before send.
  */
 import { IbossPolicyTypeError } from "../client/errors.js";
 
@@ -62,14 +69,22 @@ export const CATEGORIES_CUSTOM_TYPES = new Set<string | number>([
   "3",
   "13",
   "e_custom_category_type_categories",
+  "categories",
 ]);
 
-/** Allowlist / blocklist types — bitmap is unexpressable (silent drop). */
+/**
+ * Allowlist / blocklist destination modes — a categories bitmap is unexpressable.
+ * Gateway POST does not reject; it returns 200 and drops the bitmap.
+ * Friendly names (`allowlist`) are included because agents send those as the mode.
+ */
 export const LIST_CUSTOM_TYPES = new Set<string | number>([
   1,
   "1",
   "e_custom_category_type_allowlist",
+  "allowlist",
   "e_custom_category_type_blacklist",
+  "blocklist",
+  "blacklist",
   0,
   "0",
 ]);
@@ -99,18 +114,64 @@ export function isCategoryBitSet(bitmap: string | undefined, bit: number): boole
   return bitmap[bit] === "1";
 }
 
+/** Lowercase wire/agent token for a policy destination mode (`1` → `"1"`). */
+export function policyTypeToken(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function isCategoriesCustomType(value: unknown): boolean {
-  if (typeof value === "number" || typeof value === "string") {
-    return CATEGORIES_CUSTOM_TYPES.has(value);
-  }
-  return false;
+  const token = policyTypeToken(value);
+  if (token === undefined) return false;
+  return (
+    CATEGORIES_CUSTOM_TYPES.has(token) ||
+    CATEGORIES_CUSTOM_TYPES.has(value as string | number) ||
+    token === "e_custom_category_type_categories" ||
+    token === "categories"
+  );
 }
 
 export function isListCustomType(value: unknown): boolean {
-  if (typeof value === "number" || typeof value === "string") {
-    return LIST_CUSTOM_TYPES.has(value);
+  const token = policyTypeToken(value);
+  if (token === undefined) return false;
+  return (
+    LIST_CUSTOM_TYPES.has(token) ||
+    LIST_CUSTOM_TYPES.has(value as string | number) ||
+    token === "allowlist" ||
+    token === "blocklist" ||
+    token === "blacklist" ||
+    token === "e_custom_category_type_allowlist" ||
+    token === "e_custom_category_type_blacklist"
+  );
+}
+
+/**
+ * Allowlist, blocklist, or the same mode on `destinationMode` / `categoryType`.
+ * Any one list token is enough — the gateway drops the bitmap for that layer.
+ */
+export function readListDestinationMode(settings: Record<string, unknown>): unknown {
+  for (const value of [settings.customType, settings.categoryType, settings.destinationMode]) {
+    if (isListCustomType(value)) return value;
   }
-  return false;
+  return undefined;
+}
+
+/**
+ * True when `categories` would ask the gateway to keep a selection.
+ * A 400-char all-zero bitmap is the settings default and is not a selection.
+ * Any other non-empty bitmap — including AI Services bit 110 — is.
+ * Agent arrays such as `["AI_SERVICES"]` count too.
+ */
+export function categoriesBitmapSelects(categories: unknown): boolean {
+  if (Array.isArray(categories)) {
+    return categories.some((entry) => entry != null && String(entry).trim() !== "");
+  }
+  if (typeof categories !== "string") return false;
+  const trimmed = categories.trim();
+  if (trimmed.length === 0) return false;
+  return !/^0+$/.test(trimmed);
 }
 
 /** Prefer `customType`, fall back to `categoryType` (both appear on GET). */
@@ -121,21 +182,45 @@ export function readCustomType(settings: Record<string, unknown>): unknown {
 /**
  * Allowlist/blocklist + categories is the silent-drop footgun. Returns a
  * human-readable reason, or undefined when destinations are expressable.
+ *
+ * The gateway does not reject this combination. POST
+ * `/json/controls/policyLayers/settings` returns 200 and the following GET
+ * has `categories` length 0 (bit 110 included). Confirmed 2026-09-22 on
+ * test-gateway-14800. Callers must throw before send.
  */
 export function destinationTypeConflict(settings: Record<string, unknown>): string | undefined {
-  const customType = readCustomType(settings);
-  if (customType === undefined || customType === null) return undefined;
-  if (isCategoriesCustomType(customType)) return undefined;
-  if (isListCustomType(customType)) {
-    return (
-      `This policy is customType ${JSON.stringify(customType)} (allowlist/blocklist). ` +
-        `AI Services destinations require a categories-type layer (GET customType 3 or 13) ` +
-        `and a 400-char bitmap with bit ${AI_SERVICES_BIT} set. Allowlist recreate silently ` +
-        `drops that bitmap (GET categories length 0). Delete this layer and recreate with ` +
-        `customType "e_custom_category_type_categories" — do not try to patch the bitmap onto an allowlist.`
-    );
-  }
-  return undefined;
+  const listMode = readListDestinationMode(settings);
+  if (listMode === undefined) return undefined;
+  return (
+    `This policy is destination mode ${JSON.stringify(listMode)} (allowlist/blocklist). ` +
+    `Gateway POST /json/controls/policyLayers/settings returns 200 and silently drops a ` +
+    `categories bitmap (GET categories length 0), including AI Services bit ${AI_SERVICES_BIT}. ` +
+    `There is no wire reject — the SDK throws before send. Delete this layer and recreate ` +
+    `with customType "e_custom_category_type_categories" — do not patch the bitmap onto an allowlist.`
+  );
+}
+
+/**
+ * Throw `IbossPolicyTypeError` before POST when an allowlist (or blocklist /
+ * equivalent list destination mode) is combined with a non-empty categories
+ * bitmap or AI Services bit 110.
+ *
+ * All-zero bitmaps are allowed: full settings POSTs always carry that
+ * placeholder. The gateway silent-drops real selections (200, `categories`
+ * length 0) — this function is the guard.
+ */
+export function assertCategoriesBitmapExpressable(settings: Record<string, unknown>): void {
+  if (!categoriesBitmapSelects(settings.categories)) return;
+  const conflict = destinationTypeConflict(settings);
+  if (!conflict) return;
+  const customCategoryId =
+    settings.customCategoryId === undefined || settings.customCategoryId === null
+      ? undefined
+      : Number(settings.customCategoryId);
+  throw new IbossPolicyTypeError(conflict, {
+    customCategoryId: Number.isFinite(customCategoryId) ? customCategoryId : undefined,
+    customType: readListDestinationMode(settings) ?? readCustomType(settings),
+  });
 }
 
 export function encodeDestinationBits(spec: DestinationSpec): {

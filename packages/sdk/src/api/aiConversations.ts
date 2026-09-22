@@ -5,10 +5,16 @@
  *   GET /ibreports/web/aiSecurityGovernance/conversations
  *   GET /ibreports/web/aiSecurityGovernance/conversations/{id}
  *
- * Agents pass ISO/Date + vendor + textContains. This module translates
+ * Agents pass ISO/Date/unix-ms + vendor + textContains. This module translates
  * those into the opaque reporter query and redacts tokens from summaries.
  * The raw reporter path and query names are unchanged — callers that already
  * use client.raw("reporter", …) keep working.
+ *
+ * Plain `since` / `until` on the reporter query (ISO or milliseconds) is a
+ * **400**. The interval form (`intervalStartTime` / `intervalEndTime` /
+ * `filterByIntervalTime`) is **200**. Confirmed 2026-09-22. This module
+ * rewrites agent `since` / `until` and never sends those names. Interval
+ * fields already in wire form are passed through unchanged.
  */
 
 /** Observed reporter list/detail path (do not invent a sibling HTTP route). */
@@ -50,10 +56,29 @@ export type AiConversationVendorSlug = (typeof KNOWN_VENDOR_SLUGS)[number];
 export type AiConversationTime = string | Date | number;
 
 export interface ListAiConversationsOptions {
-  /** Inclusive start. ISO-8601 or Date. Time base is UTC. */
+  /**
+   * Inclusive start. `Date`, ISO-8601, or unix time (milliseconds, or seconds
+   * when the number is &lt; 1e12). Time base is UTC. Rewritten to
+   * `intervalStartTime` — the reporter returns 400 for a `since` parameter.
+   */
   since?: AiConversationTime;
-  /** Inclusive end. ISO-8601 or Date. Time base is UTC. */
+  /**
+   * Inclusive end. `Date`, ISO-8601, or unix time (ms, or seconds when &lt; 1e12).
+   * Time base is UTC. Rewritten to `intervalEndTime`.
+   */
   until?: AiConversationTime;
+  /**
+   * Already-wire UTC unix-ms. Passed through as `intervalStartTime` and not
+   * rescaled. Wins over `since` when both are set.
+   */
+  intervalStartTime?: number;
+  /** Already-wire UTC unix-ms. Passed through as `intervalEndTime`. Wins over `until`. */
+  intervalEndTime?: number;
+  /**
+   * Wire `filterByIntervalTime`. Omitted → `true` (the form the reporter accepts).
+   * Passed through when set.
+   */
+  filterByIntervalTime?: boolean;
   /** Friendly slug (`chatgpt`) or wire value (`CHAT_GPT`). */
   vendor?: string;
   /**
@@ -69,8 +94,16 @@ export interface ListAiConversationsOptions {
 }
 
 export interface GetAiConversationOptions {
+  /** See `ListAiConversationsOptions.since`. Not sent as a query name. */
   since?: AiConversationTime;
+  /** See `ListAiConversationsOptions.until`. Not sent as a query name. */
   until?: AiConversationTime;
+  /** Wire passthrough. Wins over `since`. */
+  intervalStartTime?: number;
+  /** Wire passthrough. Wins over `until`. */
+  intervalEndTime?: number;
+  /** Wire passthrough. Omitted → true. */
+  filterByIntervalTime?: boolean;
   reportingGroup?: number;
 }
 
@@ -136,7 +169,7 @@ export interface ReporterConversationQuery {
   reportingGroup: number;
   intervalStartTime: number;
   intervalEndTime: number;
-  filterByIntervalTime: true;
+  filterByIntervalTime: boolean;
   sortByCriteria: "SORT_BY_LAST_MESSAGE_TIME";
   orderAscending: false;
   currentRowNumber: number;
@@ -231,6 +264,58 @@ export function buildReporterConversationQuery(
     orderAscending: false,
     currentRowNumber: opts?.currentRowNumber ?? 1,
     maxItemsToReturn: opts?.maxItemsToReturn ?? AI_CONVERSATION_DEFAULT_PAGE_SIZE,
+  };
+}
+
+export interface AiConversationIntervalInput {
+  since?: AiConversationTime;
+  until?: AiConversationTime;
+  /** Wire UTC unix-ms. Not rescaled. */
+  intervalStartTime?: number;
+  /** Wire UTC unix-ms. Not rescaled. */
+  intervalEndTime?: number;
+  filterByIntervalTime?: boolean;
+  reportingGroup?: number;
+  currentRowNumber?: number;
+  maxItemsToReturn?: number;
+}
+
+/**
+ * Rewrite agent `since` / `until` (`Date` | unix ms | ISO, seconds when &lt; 1e12)
+ * into reporter `intervalStartTime` / `intervalEndTime` / `filterByIntervalTime`.
+ *
+ * The returned object never has `since` or `until`. Those names are a reporter
+ * 400 (plain ms or ISO). The interval form is 200 — confirmed 2026-09-22.
+ * When `intervalStartTime` / `intervalEndTime` / `filterByIntervalTime` are
+ * already set, they are copied through and are not rescaled; they win over
+ * `since` / `until`.
+ */
+export function rewriteAiConversationQuery(
+  opts: AiConversationIntervalInput | undefined,
+  lookbackMs: number,
+  now = Date.now(),
+): ReporterConversationQuery {
+  const endMs =
+    opts?.intervalEndTime !== undefined
+      ? opts.intervalEndTime
+      : opts?.until !== undefined
+        ? toReporterIntervalMs(opts.until, "until")
+        : now;
+  const startMs =
+    opts?.intervalStartTime !== undefined
+      ? opts.intervalStartTime
+      : opts?.since !== undefined
+        ? toReporterIntervalMs(opts.since, "since")
+        : endMs - lookbackMs;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    throw new Error("Invalid conversation interval");
+  }
+  if (startMs > endMs) {
+    throw new Error(`since (${intervalMsToIso(startMs)}) is after until (${intervalMsToIso(endMs)})`);
+  }
+  return {
+    ...buildReporterConversationQuery({ startMs, endMs }, opts),
+    filterByIntervalTime: opts?.filterByIntervalTime ?? true,
   };
 }
 

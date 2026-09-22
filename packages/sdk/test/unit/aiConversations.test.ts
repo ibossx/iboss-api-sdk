@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AI_CONVERSATION_TEXT_CONTAINS_MAX,
   aiConversationDetailPath,
+  AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
   buildReporterConversationQuery,
   filterConversationRows,
   normalizeConversationVendor,
@@ -9,6 +10,7 @@ import {
   redactConversationText,
   redactConversationUrl,
   resolveListInterval,
+  rewriteAiConversationQuery,
   toConversationDetail,
   toConversationSummary,
   toReporterIntervalMs,
@@ -28,6 +30,8 @@ describe("toReporterIntervalMs (UTC time base)", () => {
   it("treats date-only ISO as UTC midnight and scales epoch seconds", () => {
     expect(toReporterIntervalMs("2026-09-10", "since")).toBe(Date.parse("2026-09-10T00:00:00.000Z"));
     expect(toReporterIntervalMs(1_789_012_800, "since")).toBe(1_789_012_800_000);
+    // Already-ms values are not multiplied.
+    expect(toReporterIntervalMs(1_789_012_800_000, "since")).toBe(1_789_012_800_000);
   });
 
   it("rejects an inverted since/until window", () => {
@@ -37,6 +41,81 @@ describe("toReporterIntervalMs (UTC time base)", () => {
         until: "2026-09-10T00:00:00.000Z",
       }),
     ).toThrow(/since .* is after until/);
+  });
+});
+
+describe("rewriteAiConversationQuery (plain since/until is a reporter 400)", () => {
+  const untilIso = "2026-09-11T00:00:00.000Z";
+  const sinceIso = "2026-09-10T04:00:00.000Z";
+
+  it("rewrites ISO, Date, and unix-ms since/until and does not send those names", () => {
+    const fromIso = rewriteAiConversationQuery(
+      { since: sinceIso, until: untilIso },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(fromIso.intervalStartTime).toBe(Date.parse(sinceIso));
+    expect(fromIso.intervalEndTime).toBe(Date.parse(untilIso));
+    expect(fromIso.filterByIntervalTime).toBe(true);
+    expect(fromIso).not.toHaveProperty("since");
+    expect(fromIso).not.toHaveProperty("until");
+
+    const fromDate = rewriteAiConversationQuery(
+      { since: new Date(sinceIso), until: new Date(untilIso) },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(fromDate.intervalStartTime).toBe(fromIso.intervalStartTime);
+    expect(fromDate.intervalEndTime).toBe(fromIso.intervalEndTime);
+
+    const fromMs = rewriteAiConversationQuery(
+      { since: Date.parse(sinceIso), until: Date.parse(untilIso) },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(fromMs.intervalStartTime).toBe(Date.parse(sinceIso));
+    expect(fromMs.intervalEndTime).toBe(Date.parse(untilIso));
+    expect(Object.keys(fromMs)).not.toContain("since");
+    expect(Object.keys(fromMs)).not.toContain("until");
+  });
+
+  it("scales second-valued since/until into unix milliseconds", () => {
+    const query = rewriteAiConversationQuery(
+      { since: 1_789_012_800, until: "2026-09-11T00:00:00.000Z" },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(query.intervalStartTime).toBe(1_789_012_800_000);
+    expect(query.filterByIntervalTime).toBe(true);
+    expect(query).not.toHaveProperty("since");
+  });
+
+  it("passes intervalStartTime/intervalEndTime/filterByIntervalTime through without rescaling", () => {
+    const query = rewriteAiConversationQuery(
+      {
+        since: sinceIso,
+        until: untilIso,
+        intervalStartTime: 111,
+        intervalEndTime: 222,
+        filterByIntervalTime: true,
+      },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(query.intervalStartTime).toBe(111);
+    expect(query.intervalEndTime).toBe(222);
+    expect(query.filterByIntervalTime).toBe(true);
+    expect(query).not.toHaveProperty("since");
+    expect(query).not.toHaveProperty("until");
+
+    const flagged = rewriteAiConversationQuery(
+      { intervalStartTime: 1_789_012_800, intervalEndTime: 1_789_016_400, filterByIntervalTime: false },
+      AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+      0,
+    );
+    expect(flagged.intervalStartTime).toBe(1_789_012_800);
+    expect(flagged.intervalEndTime).toBe(1_789_016_400);
+    expect(flagged.filterByIntervalTime).toBe(false);
   });
 });
 

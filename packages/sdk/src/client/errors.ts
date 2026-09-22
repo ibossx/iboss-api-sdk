@@ -130,8 +130,13 @@ export class IbossVerifyError extends IbossError {
 }
 
 /**
- * Typed destinations cannot be expressed on this policy (allowlist/blocklist
- * silently drops the categories bitmap). Delete and recreate as categories-type.
+ * Typed destinations cannot be expressed on this policy.
+ *
+ * Allowlist/blocklist (and the equivalent destination mode) combined with a
+ * non-empty categories bitmap is not a wire error: Gateway POST
+ * `/json/controls/policyLayers/settings` returns 200 and silently drops the
+ * bitmap (`categories` length 0, including AI Services bit 110). The SDK
+ * throws this before send. Delete and recreate as categories-type.
  */
 export class IbossPolicyTypeError extends IbossError {
   readonly customCategoryId?: number;

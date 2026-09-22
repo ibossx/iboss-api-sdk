@@ -74,6 +74,8 @@ export interface MockState {
   dropDestinationsOnPost: boolean;
   /** Reporter AI Governance conversation rows. */
   aiConversations: Array<Record<string, unknown>>;
+  /** Last query string on the conversations list/detail routes. */
+  lastAiConversationQuery: Record<string, string> | null;
   aiConversationListNull: boolean;
   aiConversationVisibleAfterGets: number;
   aiConversationGetHits: number;
@@ -97,6 +99,7 @@ export function createMockState(): MockState {
     dropPatchFieldsOnRead: false,
     dropDestinationsOnPost: false,
     aiConversations: [],
+    lastAiConversationQuery: null,
     aiConversationListNull: false,
     aiConversationVisibleAfterGets: 0,
     aiConversationGetHits: 0,
@@ -400,7 +403,25 @@ export function createMockIboss(state: MockState): Hono {
         return state.aiConversations;
       };
 
+      const noteConversationQuery = (url: string): "reject" | "ok" => {
+        const query = Object.fromEntries(new URL(url, "http://reporter.invalid").searchParams.entries());
+        state.lastAiConversationQuery = query;
+        // Live reporter (2026-09-22): plain since/until (ms or ISO) is 400.
+        // intervalStartTime/intervalEndTime + filterByIntervalTime is 200.
+        if (query.since !== undefined || query.until !== undefined) return "reject";
+        return "ok";
+      };
+
       reporter.get("/ibreports/web/aiSecurityGovernance/conversations", (c) => {
+        if (noteConversationQuery(c.req.url) === "reject") {
+          return c.json(
+            {
+              message:
+                "since/until are not reporter parameters; use intervalStartTime, intervalEndTime, and filterByIntervalTime",
+            },
+            400,
+          );
+        }
         state.aiConversationGetHits++;
         const conversations = visibleConversations();
         return c.json({
@@ -412,6 +433,15 @@ export function createMockIboss(state: MockState): Hono {
         });
       });
       reporter.get("/ibreports/web/aiSecurityGovernance/conversations/:id", (c) => {
+        if (noteConversationQuery(c.req.url) === "reject") {
+          return c.json(
+            {
+              message:
+                "since/until are not reporter parameters; use intervalStartTime, intervalEndTime, and filterByIntervalTime",
+            },
+            400,
+          );
+        }
         state.aiConversationGetHits++;
         if (state.aiConversationGetHits <= state.aiConversationVisibleAfterGets) {
           return c.json({ message: "not found" }, 404);

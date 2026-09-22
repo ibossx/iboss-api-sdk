@@ -30,9 +30,12 @@ import { IbossApiError, IbossError, IbossVerifyError } from "../client/errors.js
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
 import {
   aiServicesDestination,
+  assertCategoriesBitmapExpressable,
+  categoriesBitmapSelects,
   collectDestinationVerifyFailures,
   decodeDestinations,
   prepareDestinationWrite,
+  readListDestinationMode,
   type DestinationSpec,
   type ResourcePolicyDestinations,
   type WrongTypeBehavior,
@@ -321,6 +324,10 @@ export class PoliciesApi extends SubClient {
    * This is a replace: omitted catN / prioN / bypassSslMitmN are
    * Gateway-defaulted (wipe-on-omit). Agents must use
    * `patchResourcePolicySettings` for one-field updates.
+   *
+   * Allowlist (or blocklist) plus a non-empty `categories` bitmap throws
+   * `IbossPolicyTypeError` before POST. The gateway returns 200 and silently
+   * drops that bitmap (`categories` length 0, including bit 110).
    */
   async updateLayerSettings(settings: {
     customCategoryId: number;
@@ -328,9 +335,33 @@ export class PoliciesApi extends SubClient {
     customCategoryName: string;
     [key: string]: unknown;
   }): Promise<SuccessResponse> {
+    await this.rejectSilentCategoryDrop(settings);
     return this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
       body: settings,
     });
+  }
+
+  /**
+   * Gateway POST returns 200 and drops a categories bitmap on allowlist /
+   * blocklist layers. Throw before that POST. When the body omits the mode,
+   * the stored layer type is checked — the drop follows the layer, not only
+   * fields the caller repeated.
+   */
+  private async rejectSilentCategoryDrop(settings: Record<string, unknown>): Promise<void> {
+    if (!categoriesBitmapSelects(settings.categories)) return;
+    const probe: Record<string, unknown> = { ...settings };
+    if (readListDestinationMode(probe) === undefined && settings.customCategoryId != null) {
+      try {
+        const current = await this.getLayerSettings(Number(settings.customCategoryId));
+        const storedMode = readListDestinationMode(current);
+        if (storedMode !== undefined) probe.customType = storedMode;
+        else if (current.customType !== undefined) probe.customType = current.customType;
+        else if (current.categoryType !== undefined) probe.categoryType = current.categoryType;
+      } catch {
+        // Body-only check. A 404 here means there is no stored mode to drop against.
+      }
+    }
+    assertCategoriesBitmapExpressable(probe);
   }
 
   /**
@@ -355,6 +386,15 @@ export class PoliciesApi extends SubClient {
     /** Merged over sensible defaults (enabled, all-users, default category fields). */
     settings?: Record<string, unknown>;
   }): Promise<CreateLayerResult> {
+    // Reject allowlist/blocklist + a real categories bitmap before PUT.
+    // The all-zero placeholder added below is not a selection.
+    if (params.settings) {
+      assertCategoriesBitmapExpressable({
+        ...params.settings,
+        customType: params.settings.customType ?? CUSTOM_TYPE[params.type],
+      });
+    }
+
     const created = await this.createLayerStructure(params);
 
     const isResourcePolicy = params.isZeroTrustResourcePolicy === 1;
@@ -401,7 +441,8 @@ export class PoliciesApi extends SubClient {
    *
    * Default `type` is `"categories"` so destinations are expressable.
    * Allowlist/blocklist + destinations throws `IbossPolicyTypeError` before
-   * any write (allowlist recreate silently drops the bitmap).
+   * any write. Gateway POST would return 200 and silently drop the bitmap
+   * (`categories` length 0); the SDK throw is the guard.
    */
   async createResourcePolicy(params: CreateResourcePolicyParams): Promise<CreateResourcePolicyResult> {
     const type = params.type ?? "categories";
@@ -626,6 +667,9 @@ export class PoliciesApi extends SubClient {
     assertSparsePatch(patch);
     const transport = opts?.transport ?? "auto";
     const body = sparseSettingsBody(customCategoryId, patch);
+    if (categoriesBitmapSelects(patch.categories) || categoriesBitmapSelects(body.categories)) {
+      await this.rejectSilentCategoryDrop({ ...body, customCategoryId });
+    }
 
     if (transport === "native-patch") {
       await this.request("gateway", "PATCH", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
@@ -699,6 +743,9 @@ export class PoliciesApi extends SubClient {
       { query: { customCategoryId }, signal },
     );
     const next = mergeResourcePolicySettingsForFallback(current, patch);
+    if (categoriesBitmapSelects(patch.categories) || readListDestinationMode(patch) !== undefined) {
+      assertCategoriesBitmapExpressable(next);
+    }
     await this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
       body: next,
       signal,
@@ -739,9 +786,10 @@ export class PoliciesApi extends SubClient {
    * clients.
    *
    * Allowlist/blocklist + categories **rejects** by default
-   * (`IbossPolicyTypeError`) — the platform silently drops the bitmap
-   * (`GET categories` length 0). Pass `onWrongType: "warn"` to skip the
-   * write and leave the layer unchanged.
+   * (`IbossPolicyTypeError`) — the platform returns 200 and silently drops
+   * the bitmap (`GET categories` length 0, including bit 110). There is no
+   * wire reject; this throw happens before POST. Pass `onWrongType: "warn"`
+   * to skip the write and leave the layer unchanged.
    *
    * Implementation (no Gateway destinations sibling required):
    * 1. GET `/json/controls/policyLayers/settings?customCategoryId=`
@@ -776,6 +824,7 @@ export class PoliciesApi extends SubClient {
       customCategoryId,
     };
 
+    assertCategoriesBitmapExpressable(body);
     await this.request("gateway", "POST", RESOURCE_POLICY_SETTINGS_WIRE_PATH, {
       body,
       signal: opts?.signal,

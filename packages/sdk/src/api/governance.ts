@@ -6,7 +6,7 @@
  *
  * ```ts
  * await client.governance.listAiConversations({
- *   since, until, // ISO or Date — UTC
+ *   since, until, // Date | unix ms | ISO — rewritten, never sent as since/until
  *   vendor,
  *   textContains,
  * });
@@ -17,15 +17,15 @@ import { IbossApiError, IbossError } from "../client/errors.js";
 import { sleep as defaultSleep } from "../client/retry.js";
 import { SubClient } from "./base.js";
 import {
+  AI_CONVERSATION_DEFAULT_LOOKBACK_MS,
+  AI_CONVERSATION_GET_LOOKBACK_MS,
   AI_CONVERSATION_TYPICAL_LAG_MINUTES,
   AI_GOVERNANCE_CONVERSATIONS_PATH,
   aiConversationDetailPath,
-  buildReporterConversationQuery,
   filterConversationRows,
   intervalMsToIso,
   normalizeTextContains,
-  resolveGetInterval,
-  resolveListInterval,
+  rewriteAiConversationQuery,
   toConversationDetail,
   toConversationSummary,
   normalizeConversationVendor,
@@ -43,7 +43,14 @@ export class GovernanceApi extends SubClient {
    * List AI Governance conversation summaries.
    *
    * Wire: `GET /ibreports/web/aiSecurityGovernance/conversations` with
-   * `intervalStartTime` / `intervalEndTime` as UTC unix milliseconds.
+   * `intervalStartTime` / `intervalEndTime` (UTC unix milliseconds) and
+   * `filterByIntervalTime=true`.
+   *
+   * Pass `since` / `until` as a `Date`, unix milliseconds, or ISO-8601 string.
+   * Those names are **not** sent: the reporter returns 400 for plain
+   * `since`/`until` and 200 for the interval form (confirmed 2026-09-22).
+   * `intervalStartTime` / `intervalEndTime` / `filterByIntervalTime`, when
+   * set, are passed through and are not rescaled.
    * `vendor` and `textContains` are applied in the SDK (the reporter query
    * has no equivalent plain parameters).
    *
@@ -55,8 +62,8 @@ export class GovernanceApi extends SubClient {
   async listAiConversations(opts?: ListAiConversationsOptions): Promise<AiConversationList> {
     if (opts?.textContains !== undefined) normalizeTextContains(opts.textContains);
     if (opts?.vendor !== undefined) normalizeConversationVendor(opts.vendor);
-    const interval = resolveListInterval(opts);
-    const query = buildReporterConversationQuery(interval, opts);
+    const query = rewriteAiConversationQuery(opts, AI_CONVERSATION_DEFAULT_LOOKBACK_MS);
+    const interval = { startMs: query.intervalStartTime, endMs: query.intervalEndTime };
     const payload = await this.request<unknown>("reporter", "GET", AI_GOVERNANCE_CONVERSATIONS_PATH, {
       query,
     });
@@ -77,17 +84,20 @@ export class GovernanceApi extends SubClient {
    * Get one conversation, including `messages[]` (bodies live here, not on
    * the list). Tokens in `domain` and message text are redacted.
    *
-   * Wire: `GET /ibreports/web/aiSecurityGovernance/conversations/{id}`.
-   * A 404 often means the reporter has not indexed the chat yet (~15m lag)
-   * rather than a bad id — see `waitForAiConversation`.
+   * Wire: `GET /ibreports/web/aiSecurityGovernance/conversations/{id}` with the
+   * same interval rewrite as `listAiConversations` (`since`/`until` are not
+   * query parameters). A 404 often means the reporter has not indexed the
+   * chat yet (~15m lag) rather than a bad id — see `waitForAiConversation`.
    */
   async getAiConversation(id: string, opts?: GetAiConversationOptions): Promise<AiConversationDetail> {
-    const interval = resolveGetInterval(opts);
-    const query = buildReporterConversationQuery(interval, {
-      reportingGroup: opts?.reportingGroup,
-      currentRowNumber: 1,
-      maxItemsToReturn: 1,
-    });
+    const query = rewriteAiConversationQuery(
+      {
+        ...opts,
+        currentRowNumber: 1,
+        maxItemsToReturn: 1,
+      },
+      AI_CONVERSATION_GET_LOOKBACK_MS,
+    );
     const payload = await this.request<unknown>("reporter", "GET", aiConversationDetailPath(id), {
       query,
     });

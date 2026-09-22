@@ -4,6 +4,7 @@ import {
   AI_SERVICES_BIT,
   CATEGORIES_BITMAP_LENGTH,
   CATEGORIES_SELECTED_TYPE,
+  assertCategoriesBitmapExpressable,
   collectDestinationVerifyFailures,
   decodeDestinations,
   destinationTypeConflict,
@@ -11,6 +12,8 @@ import {
   isCategoryBitSet,
   padCategoriesBitmap,
   prepareDestinationWrite,
+  setCategoryBit,
+  emptyDestinationBitmap,
 } from "../../src/api/destinations.js";
 import { emptyCategoriesBitmap } from "../../src/api/policies.js";
 
@@ -61,9 +64,64 @@ describe("categories bitmap (DEVELOP-34925 / 34916)", () => {
     expect(destinationTypeConflict({ customType: "e_custom_category_type_allowlist" })).toMatch(
       /allowlist/,
     );
+    expect(destinationTypeConflict({ destinationMode: "allowlist" })).toMatch(/before send/);
+    expect(destinationTypeConflict({ customType: "ALLOWLIST" })).toMatch(/allowlist/i);
     expect(destinationTypeConflict({ customType: 3 })).toBeUndefined();
     expect(destinationTypeConflict({ customType: 13 })).toBeUndefined();
     expect(destinationTypeConflict({ categoryType: 13 })).toBeUndefined();
+  });
+
+  it("throws before send when allowlist is combined with a categories bitmap (gateway 200 silent drop)", () => {
+    const bitmap = setCategoryBit(emptyDestinationBitmap(), AI_SERVICES_BIT);
+    expect(bitmap[AI_SERVICES_BIT]).toBe("1");
+
+    expect(() =>
+      assertCategoriesBitmapExpressable({
+        customCategoryId: 14800,
+        customType: 1,
+        categories: bitmap,
+        categoriesSelectedType: 0,
+      }),
+    ).toThrow(IbossPolicyTypeError);
+
+    expect(() =>
+      assertCategoriesBitmapExpressable({
+        destinationMode: "e_custom_category_type_allowlist",
+        categories: bitmap,
+      }),
+    ).toThrow(/silently drops/);
+
+    expect(() =>
+      assertCategoriesBitmapExpressable({
+        customType: "blocklist",
+        categories: ["AI_SERVICES"],
+      }),
+    ).toThrow(IbossPolicyTypeError);
+
+    // All-zero placeholder (full settings POST) is not a selection.
+    expect(() =>
+      assertCategoriesBitmapExpressable({
+        customType: 1,
+        categories: emptyDestinationBitmap(),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertCategoriesBitmapExpressable({ customType: "allowlist", categories: "" }),
+    ).not.toThrow();
+
+    // Categories-type layers may carry bit 110.
+    expect(() =>
+      assertCategoriesBitmapExpressable({ customType: 3, categories: bitmap }),
+    ).not.toThrow();
+    expect(() =>
+      assertCategoriesBitmapExpressable({ customType: 13, categories: bitmap }),
+    ).not.toThrow();
+    expect(() =>
+      assertCategoriesBitmapExpressable({
+        categoryType: "e_custom_category_type_categories",
+        categories: bitmap,
+      }),
+    ).not.toThrow();
   });
 
   it("rejects allowlist+categories by default (never silent drop)", () => {
