@@ -34,7 +34,9 @@ When the user describes an automation they want:
    `listPolicies` kinds, governance conversations) start with
    [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Read
    [docs/api/agent-footguns.md](docs/api/agent-footguns.md) before a
-   sparse POST, allowlist+categories write, or governance query. Then
+   sparse POST, allowlist+categories write, or governance query. Evening
+   stack merge/review order (Gateway 34921 then 34923; SDK recon #8):
+   [docs/api/merge-order.md](docs/api/merge-order.md). Then
    check [docs/api/README.md](docs/api/README.md) — the index maps each
    doc to its admin-console section — and the specific doc (e.g.
    [docs/api/resource-policies.md](docs/api/resource-policies.md)). The
@@ -129,6 +131,14 @@ examples/                  small runnable library scripts
   categories silent drop, POST 200 / empty `saveIgnoredEntries`, magic
   `typeFilter=9`, opaque governance epochs / ~15m lag. See
   [docs/api/agent-footguns.md](docs/api/agent-footguns.md).
+- **Evening-stack merge order:** Gateway
+  DEVELOP-34921 (lockboxLinux #6340) then DEVELOP-34923 (#6344). SDK:
+  prefer reconcile #8 as the integration branch; per-ticket #2–#7 stay
+  review surfaces; docs #9 then #10 stack on reconcile. Clash winners:
+  settings=#3, destinations=#4, create=#5, `listPolicies`=#6,
+  governance=#7, defaults=#2. Live QA blocked while test-gateway-14800
+  is held for DEVELOP-34920. See
+  [docs/api/merge-order.md](docs/api/merge-order.md).
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.
