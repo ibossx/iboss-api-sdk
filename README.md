@@ -64,7 +64,7 @@ new automation is one small file rather than a project. What you get:
 |---|---|
 | Single-step auth | Your API key is the bearer token. Set `credentials: { apiKey }` and connect. Rotation and expiry tracking are built in. |
 | Automatic host discovery | `connect()` maps your account's gateway, reporter, and browser-isolation nodes. Nothing is hardcoded. |
-| Typed client, 12 feature areas | `client.policies`, `.dlp`, `.ssl`, `.network`, `.locations`, `.reporting`, and more, plus a `raw()` escape hatch for anything else. |
+| Typed client, 13 feature areas | `client.policies`, `.dlp`, `.ssl`, `.network`, `.locations`, `.reporting`, `.governance`, and more, plus a `raw()` escape hatch for anything else. |
 | Platform conventions built in | Two-step policy creation, XSRF handling per host, verified wire shapes, and retry with backoff are part of the library and documented in `docs/api/`. |
 | Write once, run anywhere | A workflow file is both a CLI command and a web UI card, backed by one engine. |
 | AI-ready documentation | `AGENTS.md`, skills, and per-endpoint docs let Claude Code, Cursor, and other AI tools build workflows from a plain-language description. |
@@ -113,7 +113,7 @@ flowchart LR
     end
     C -->|"/ibcloud/web/…"| CLOUD["Cloud base host<br/>accounts · groups · locations<br/>resources · preferences"]
     C -->|"/json/…"| GW["Gateway node (discovered)<br/>policies · firewall · DLP · SSL<br/>ZTNA · users/devices"]
-    C -->|"/ibreports/web/…"| REP["Reporter node (discovered)<br/>reports · URL logs · incidents"]
+    C -->|"/ibreports/web/…"| REP["Reporter node (discovered)<br/>reports · URL logs · incidents · AI Governance"]
 ```
 
 Authentication uses the API key as the bearer token. Every request carries
@@ -450,7 +450,7 @@ credentials redacted. Details:
 ```
 ├── packages/sdk/          the SDK: client, feature APIs, workflow engine, CLI
 │   ├── src/client/        auth, discovery, request layer, cookies, errors
-│   ├── src/api/           12 feature-area sub-clients
+│   ├── src/api/           13 feature-area sub-clients
 │   ├── src/workflows/     defineWorkflow, discovery, runner
 │   ├── src/cli/           the `iboss` command
 │   └── test/              tests incl. a mock iboss (3 host tiers, XSRF enforced)
@@ -481,7 +481,7 @@ tested without touching a live tenant. To wrap a new endpoint, follow
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | setup, credentials, profiles, first calls |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | host tiers, auth and discovery, cookies/XSRF, retries |
 | [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | full workflow authoring reference |
-| [docs/api/README.md](docs/api/README.md) | endpoint reference index (12 feature areas) |
+| [docs/api/README.md](docs/api/README.md) | endpoint reference index (13 feature areas) |
 | [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md) | status semantics, host routing, platform behaviors |
 | [workflows/README.md](workflows/README.md) | quick workflow authoring guide |
 

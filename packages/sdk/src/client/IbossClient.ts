@@ -10,14 +10,15 @@
  * const layers = await client.policies.listLayers();
  * ```
  *
- * Feature areas are exposed as sub-clients (client.policies, client.dlp, ...).
- * Anything not wrapped yet is reachable via client.raw().
+ * Feature areas are exposed as sub-clients (client.policies, client.dlp,
+ * client.governance, ...). Anything not wrapped yet is reachable via client.raw().
  */
 import { AccountApi } from "../api/account.js";
 import { AppsApi } from "../api/apps.js";
 import { DirectoryApi } from "../api/directory.js";
 import { DlpApi } from "../api/dlp.js";
 import { FirewallApi } from "../api/firewall.js";
+import { GovernanceApi } from "../api/governance.js";
 import { GroupsApi } from "../api/groups.js";
 import { LocationsApi } from "../api/locations.js";
 import { NetworkApi } from "../api/network.js";
@@ -48,6 +49,7 @@ export class IbossClient {
   readonly network: NetworkApi;
   readonly directory: DirectoryApi;
   readonly reporting: ReportingApi;
+  readonly governance: GovernanceApi;
 
   private readonly config: IbossClientConfig;
   private readonly provider: CredentialProvider;
@@ -85,6 +87,7 @@ export class IbossClient {
     this.network = new NetworkApi(this);
     this.directory = new DirectoryApi(this);
     this.reporting = new ReportingApi(this);
+    this.governance = new GovernanceApi(this);
   }
 
   /**

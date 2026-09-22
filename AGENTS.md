@@ -84,6 +84,16 @@ examples/                  small runnable library scripts
 - **Three host tiers** (the SDK routes automatically): cloud
   (`/ibcloud/web/...`), gateway node (`/json/...`), reporter node
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **AI Governance conversations** (reporter):
+  `client.governance.listAiConversations({ since, until, vendor, textContains })`
+  and `getAiConversation(id)`. Time base is **UTC** (ISO or Date → wire
+  `intervalStartTime` unix-ms). Search is eventually consistent (**~15
+  minutes** lag). `textContains` is a case-insensitive substring on
+  topic/preview only, max 256 chars, not regex. Summaries redact tokens in
+  `domain` and bodies. `items` is always an array, never null. Do not
+  hand-roll the opaque reporter query. Policy-kind lists are a separate
+  API (DEVELOP-34927). Docs:
+  [docs/api/ai-governance-conversations.md](docs/api/ai-governance-conversations.md).
 - **Policy creation is two-step** (create structure → apply settings).
   `client.policies.createLayer()` wraps it — don't hand-roll it.
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —

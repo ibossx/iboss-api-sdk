@@ -22,6 +22,7 @@ gotchas.
 | [dlp.md](dlp.md) | DLP | `client.dlp` | content analysis rules, DLP responses, converters |
 | [users-and-devices.md](users-and-devices.md) | Resources, Users & Assets | `client.directory` | static proxy users and devices |
 | [reporting-and-logs.md](reporting-and-logs.md) | Reporting | `client.reporting` | drill-down reports, URL logs, incident settings |
+| [ai-governance-conversations.md](ai-governance-conversations.md) | AI Security Dashboard → Conversations | `client.governance` | AI Governance conversation list/get (reporter; ~15m lag) |
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
 
 ## The four policy types (they look similar on the wire)

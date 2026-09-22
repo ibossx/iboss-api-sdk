@@ -34,6 +34,13 @@ export interface MockState {
   /** Force 5xx on the next N matching GETs of this path (transient-failure tests). */
   failNextGets: { path: string; remaining: number } | null;
   nextLayerId: number;
+  /** AI Governance conversations (reporter). */
+  aiConversations: Array<Record<string, unknown>>;
+  /** When true, list returns `{ result: { conversations: null } }`. */
+  aiConversationListNull: boolean;
+  /** Delay appearing in the index until this many list/get hits (lag tests). */
+  aiConversationVisibleAfterGets: number;
+  aiConversationGetHits: number;
 }
 
 export function createMockState(): MockState {
@@ -45,6 +52,10 @@ export function createMockState(): MockState {
     resourceAssociations: [],
     failNextGets: null,
     nextLayerId: 100,
+    aiConversations: [],
+    aiConversationListNull: false,
+    aiConversationVisibleAfterGets: 0,
+    aiConversationGetHits: 0,
   };
 }
 
@@ -228,6 +239,41 @@ export function createMockIboss(state: MockState): Hono {
         return c.json({ userId: scopeOf(c)!.ibCloudUserId });
       });
       reporter.get("/ibreports/web/reports/lite", (c) => c.json([{ reportId: 9, reportName: "Daily" }]));
+
+      const visibleConversations = () => {
+        if (state.aiConversationListNull) return null;
+        if (state.aiConversationGetHits < state.aiConversationVisibleAfterGets) return [];
+        return state.aiConversations;
+      };
+
+      reporter.get("/ibreports/web/aiSecurityGovernance/conversations", (c) => {
+        state.aiConversationGetHits++;
+        const conversations = visibleConversations();
+        return c.json({
+          result: {
+            conversations,
+            intervalStartTime: Number(c.req.query("intervalStartTime") ?? 0),
+            intervalEndTime: Number(c.req.query("intervalEndTime") ?? 0),
+          },
+        });
+      });
+      reporter.get("/ibreports/web/aiSecurityGovernance/conversations/:id", (c) => {
+        state.aiConversationGetHits++;
+        if (state.aiConversationGetHits <= state.aiConversationVisibleAfterGets) {
+          return c.json({ message: "not found" }, 404);
+        }
+        const id = c.req.param("id");
+        const row = state.aiConversations.find(
+          (entry) => String(entry.conversationId ?? entry.id) === id,
+        );
+        if (!row) return c.json({ message: "not found" }, 404);
+        return c.json({
+          result: {
+            conversation: row,
+            messages: Array.isArray(row.messages) ? row.messages : [],
+          },
+        });
+      });
     },
   });
 

@@ -70,6 +70,24 @@ export type { ContentAnalysisRule, DlpPolicyResponse } from "./api/dlp.js";
 export type { ZtnaPeer } from "./api/network.js";
 export type { ProxyUser, ProxyDevice } from "./api/directory.js";
 export type { DrillDownReport, UrlLogEntry, TopNOptions } from "./api/reporting.js";
+export {
+  GovernanceApi,
+  AI_GOVERNANCE_CONVERSATIONS_PATH,
+  AI_CONVERSATION_TYPICAL_LAG_MINUTES,
+  AI_CONVERSATION_TEXT_CONTAINS_MAX,
+  AI_CONVERSATION_VENDOR_WIRE,
+} from "./api/governance.js";
+export type {
+  AiConversationDetail,
+  AiConversationList,
+  AiConversationListFilter,
+  AiConversationMessage,
+  AiConversationSummary,
+  AiConversationTime,
+  ListAiConversationsOptions,
+  GetAiConversationOptions,
+  WaitForAiConversationOptions,
+} from "./api/governance.js";
 
 // Workflows
 export { defineWorkflow } from "./workflows/define.js";

@@ -20,7 +20,7 @@ All API errors carry `method`, `url`, `status`, and a truncated response
 |---|---|---|
 | `/ibcloud/web/...` | cloud (config.domain) | accounts, groups, PAC zones, resources, preferences |
 | `/json/...` | gateway node (discovered) | policy layers, firewall, DLP, SSL, ZTNA, users/devices |
-| `/ibreports/web/...` | reporter node (discovered) | reports, URL logs, incidents |
+| `/ibreports/web/...` | reporter node (discovered) | reports, URL logs, incidents, AI Governance conversations |
 | `/ibossauth/web/...` | accounts host | login/token APIs |
 
 `IbossHostUnavailableError` means the account has no node of that type (e.g.
@@ -68,6 +68,13 @@ no reporting cluster provisioned).
   modify, POST.
 - **DLP endpoints 422 without a DLP subscription** — expected behavior, not
   an error in your code.
+- **AI Governance conversations** are reporter-only
+  (`/ibreports/web/aiSecurityGovernance/conversations`). Use
+  `client.governance.listAiConversations({ since, until, vendor, textContains })`
+  — `since`/`until` are UTC ISO or Date (wire `intervalStartTime` is UTC
+  unix-ms). Search is eventually consistent (~15 minutes lag). List `items`
+  is never null; tokens in `domain` / bodies are redacted. Do not hand-roll
+  the opaque query. Policy-kind lists are a different API.
 
 ## Debug logging
 
