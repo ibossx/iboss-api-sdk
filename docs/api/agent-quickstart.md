@@ -39,7 +39,7 @@ const policy = await client.policies.createResourcePolicy({
   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
   settings: {
     aiRiskEnabled: 1,
-    aiRiskEngines: "chatgpt",
+    aiRiskEngines: ["chatgpt"],
     linkPolicyToAllSubjects: 1,
   },
 });

@@ -24,7 +24,7 @@ describe("createResourcePolicy (DEVELOP-34926)", () => {
       destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
       settings: {
         aiRiskEnabled: 1,
-        aiRiskEngines: "chatgpt",
+        aiRiskEngines: ["chatgpt"],
         aiRiskMonitoringMessage: "AI use is monitored.",
         linkPolicyToAllSubjects: 1,
       },

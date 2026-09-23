@@ -18,6 +18,7 @@
  * `updateLayerSettings(fullBlob)` remains the full-replace API.
  */
 import { IbossApiError } from "../client/errors.js";
+import { encodeAiRiskEngines, type AiRiskEnginesInput } from "./aiRiskEngines.js";
 import {
   ensureFieldFamilies,
   isGeneratedSettingsFamilyKey,
@@ -41,6 +42,8 @@ export type ResourcePolicySettingsTransport =
   | "get-merge-post";
 
 export interface ResourcePolicySettingsPatch {
+  /** `"all"` or engine slugs. Encoded to the platform string before write. */
+  aiRiskEngines?: AiRiskEnginesInput;
   [key: string]: unknown;
 }
 
@@ -106,7 +109,8 @@ export function viewResourcePolicySettings(
 /**
  * Build the sparse body. `undefined` keys are dropped. Generated families
  * are allowed only when the caller set them explicitly — they are never
- * invented here.
+ * invented here. `aiRiskEngines` is validated and encoded (`"all"` or a
+ * slug list → platform string) before the body is sent.
  */
 export function sparseSettingsBody(
   customCategoryId: number,
@@ -115,6 +119,10 @@ export function sparseSettingsBody(
   const body: Record<string, unknown> = { customCategoryId };
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || key === "customCategoryId") continue;
+    if (key === "aiRiskEngines" && value !== null) {
+      body.aiRiskEngines = encodeAiRiskEngines(value as AiRiskEnginesInput | string);
+      continue;
+    }
     body[key] = value;
   }
   return body;
@@ -165,8 +173,14 @@ export function collectSparseVerifyFailures(
   for (const [key, expected] of Object.entries(patch)) {
     if (expected === undefined || expected === null) continue;
     if (isPlainObject(expected)) continue;
-    if (!valuesEqual(actual[key], expected)) {
-      failures.push(`${key} is ${JSON.stringify(actual[key])}, expected ${JSON.stringify(expected)}`);
+    const wireExpected =
+      key === "aiRiskEngines"
+        ? encodeAiRiskEngines(expected as AiRiskEnginesInput | string)
+        : expected;
+    if (!valuesEqual(actual[key], wireExpected)) {
+      failures.push(
+        `${key} is ${JSON.stringify(actual[key])}, expected ${JSON.stringify(wireExpected)}`,
+      );
     }
   }
   return failures;

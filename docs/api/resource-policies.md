@@ -78,7 +78,7 @@ const client = IbossClient.fromEnv(); // IBOSS_API_KEY + IBOSS_CLOUD_DOMAIN
 const policy = await client.policies.createResourcePolicy({
   name: "AI Security",
   destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
-  settings: { aiRiskEnabled: 1, aiRiskEngines: "chatgpt", linkPolicyToAllSubjects: 1 },
+  settings: { aiRiskEnabled: 1, aiRiskEngines: ["chatgpt"], linkPolicyToAllSubjects: 1 },
 });
 // policy.settings is the re-GET (effective), not the POST 200 / ids
 

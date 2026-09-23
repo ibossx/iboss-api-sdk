@@ -30,6 +30,7 @@ import {
   type DestinationVerifyExpectation,
   type ResourcePolicyDestinations,
 } from "./destinations.js";
+import { encodeAiRiskEngines, type AiRiskEnginesInput } from "./aiRiskEngines.js";
 import {
   ensureFieldFamilies,
   isGeneratedSettingsFamilyKey,
@@ -46,7 +47,8 @@ export const RESOURCE_POLICY_SETTINGS_WIRE_PATH = "/json/controls/policyLayers/s
  */
 export interface ResourcePolicySettingsPatch {
   aiRiskEnabled?: number | boolean;
-  aiRiskEngines?: string;
+  /** `"all"` or engine slugs. Encoded to the platform string before POST. */
+  aiRiskEngines?: AiRiskEnginesInput;
   aiRiskMonitoringMessage?: string;
   aiRiskMonitoringMessageEnabled?: number | boolean;
   aiRiskMonitoringMessageTitle?: string;
@@ -77,7 +79,8 @@ export interface CreateResourcePolicyParams {
   associatedGroups?: string;
   enableGroupAssociation?: number | boolean;
   aiRiskEnabled?: number | boolean;
-  aiRiskEngines?: string;
+  /** `"all"` or engine slugs. Encoded to the platform string before POST. */
+  aiRiskEngines?: AiRiskEnginesInput;
   aiRiskMonitoringMessage?: string;
   aiRiskMonitoringMessageEnabled?: number | boolean;
   aiRiskMonitoringMessageTitle?: string;
@@ -141,6 +144,10 @@ function normalizeSettingsFields(patch: ResourcePolicySettingsPatch): Record<str
   const fields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || WIRE_DESTINATION_KEYS.has(key)) continue;
+    if (key === "aiRiskEngines" && value !== null) {
+      fields.aiRiskEngines = encodeAiRiskEngines(value as AiRiskEnginesInput | string);
+      continue;
+    }
     if (FLAG_KEYS.has(key) && (typeof value === "boolean" || value === 0 || value === 1)) {
       fields[key] = asFlag(value as number | boolean);
       continue;
