@@ -1,8 +1,9 @@
 /**
  * aiRiskEngines validation (DEVELOP-34913 / G).
  *
- * Settings wire form is a free-form string (observed: "chatgpt"). The SDK
- * accepts `"all"` or an array of known slugs and rejects display names
+ * Settings wire form is a free-form string (observed: "chatgpt"). Public
+ * write input is `"all" | string[]`. The SDK encodes that to the platform
+ * string on merge, create, and sparse patch, and rejects display names
  * ("ChatGPT") before POST. The published list is not final — unknown values
  * throw rather than guess.
  */
@@ -17,16 +18,19 @@ export const KNOWN_AI_RISK_ENGINES = [
 
 export type AiRiskEngine = (typeof KNOWN_AI_RISK_ENGINES)[number];
 
-export type AiRiskEnginesInput = "all" | readonly AiRiskEngine[] | AiRiskEngine | string;
+/** Public write input: `"all"` or a list of engine slugs. */
+export type AiRiskEnginesInput = "all" | string[];
 
 const KNOWN = new Set<string>(KNOWN_AI_RISK_ENGINES);
 
 /**
  * Normalize an agent-facing aiRiskEngines value to the platform string.
- * `"all"` expands to the known slug list (comma-separated). Unknown slugs
- * and display names throw before any settings POST.
+ * `"all"` expands to the known slug list (comma-separated). A string array
+ * is joined. A single slug string is the observed wire form and is kept
+ * when it is a known slug. Unknown slugs and display names throw before
+ * any settings POST.
  */
-export function encodeAiRiskEngines(value: AiRiskEnginesInput): string {
+export function encodeAiRiskEngines(value: AiRiskEnginesInput | string): string {
   if (value === "all") return KNOWN_AI_RISK_ENGINES.join(",");
   const list = (Array.isArray(value) ? value : [value]).map((item) => String(item).trim());
   if (list.length === 0) {

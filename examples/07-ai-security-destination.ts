@@ -36,7 +36,7 @@ const policy = existing?.customCategoryId
       name: POLICY_NAME,
       destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
       aiRiskEnabled: true,
-      aiRiskEngines: "chatgpt",
+      aiRiskEngines: ["chatgpt"],
       linkPolicyToAllSubjects: true,
       aiRiskMonitoringMessage: "AI use is monitored.",
       aiRiskMonitoringMessageEnabled: true,

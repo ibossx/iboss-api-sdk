@@ -52,6 +52,59 @@ describe("createResourcePolicy compose (destinations + settings)", () => {
     expect(() => assertCreateSettingsPatch({ categoriesSelectedType: 0 })).toThrow(/destinations/);
   });
 
+  it("encodes aiRiskEngines \"all\" and slug lists before the settings POST", () => {
+    const base = {
+      customCategoryId: 7,
+      customCategoryNumber: 1007,
+      name: "AI Security",
+      type: "categories" as const,
+    };
+    const all = buildCreateResourcePolicySettings({
+      ...base,
+      settings: resolveCreateSettingsPatch({ name: "AI Security", aiRiskEngines: "all" }),
+    });
+    expect(all.body.aiRiskEngines).toBe("chatgpt,claude,gemini,copilot,perplexity");
+    expect(all.verify.fields.aiRiskEngines).toBe("chatgpt,claude,gemini,copilot,perplexity");
+
+    const listed = buildCreateResourcePolicySettings({
+      ...base,
+      settings: { aiRiskEngines: ["chatgpt", "claude"] },
+    });
+    expect(listed.body.aiRiskEngines).toBe("chatgpt,claude");
+    expect(listed.verify.fields.aiRiskEngines).toBe("chatgpt,claude");
+
+    const settingsWin = buildCreateResourcePolicySettings({
+      ...base,
+      settings: resolveCreateSettingsPatch({
+        name: "AI Security",
+        aiRiskEngines: ["perplexity"],
+        settings: { aiRiskEngines: "all" },
+      }),
+    });
+    expect(settingsWin.body.aiRiskEngines).toBe("chatgpt,claude,gemini,copilot,perplexity");
+  });
+
+  it("rejects invalid aiRiskEngines before a create body is posted", () => {
+    const base = {
+      customCategoryId: 7,
+      customCategoryNumber: 1007,
+      name: "AI Security",
+      type: "categories" as const,
+    };
+    expect(() =>
+      buildCreateResourcePolicySettings({
+        ...base,
+        settings: { aiRiskEngines: ["ChatGPT"] },
+      }),
+    ).toThrow(/Unknown aiRiskEngines/);
+    expect(() =>
+      buildCreateResourcePolicySettings({
+        ...base,
+        settings: { aiRiskEngines: [] },
+      }),
+    ).toThrow(/non-empty list/);
+  });
+
   it("lets settings win over top-level aliases", () => {
     const patch = resolveCreateSettingsPatch({
       name: "P",
