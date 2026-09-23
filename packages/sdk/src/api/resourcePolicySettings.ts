@@ -126,8 +126,8 @@ function normalizePatchFields(patch: ResourcePolicyPatch): Record<string, unknow
   const fields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || META_KEYS.has(key)) continue;
-    if (key === "aiRiskEngines") {
-      fields.aiRiskEngines = encodeAiRiskEngines(value as AiRiskEnginesInput);
+    if (key === "aiRiskEngines" && value !== null) {
+      fields.aiRiskEngines = encodeAiRiskEngines(value as AiRiskEnginesInput | string);
       continue;
     }
     if (FLAG_KEYS.has(key) && (typeof value === "boolean" || value === 0 || value === 1)) {

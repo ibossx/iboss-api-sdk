@@ -60,6 +60,27 @@ describe("sparseSettingsBody", () => {
     expect(body.prio0).toBeUndefined();
     expect(body.categories).toBeUndefined();
   });
+
+  it("encodes aiRiskEngines \"all\" and slug lists onto the wire string", () => {
+    expect(sparseSettingsBody(1114, { aiRiskEngines: "all" }).aiRiskEngines).toBe(
+      "chatgpt,claude,gemini,copilot,perplexity",
+    );
+    expect(sparseSettingsBody(1114, { aiRiskEngines: ["gemini", "copilot"] }).aiRiskEngines).toBe(
+      "gemini,copilot",
+    );
+  });
+
+  it("rejects invalid aiRiskEngines before the sparse body is sent", () => {
+    expect(() => sparseSettingsBody(1114, { aiRiskEngines: ["ChatGPT"] })).toThrow(
+      /Unknown aiRiskEngines/,
+    );
+    expect(() => sparseSettingsBody(1114, { aiRiskEngines: [] })).toThrow(/non-empty list/);
+    expect(() =>
+      sparseSettingsBody(1114, {
+        aiRiskEngines: "ChatGPT" as unknown as "all",
+      }),
+    ).toThrow(/Unknown aiRiskEngines/);
+  });
 });
 
 describe("mergePatch (RFC 7396)", () => {
@@ -107,6 +128,15 @@ describe("mergeResourcePolicySettingsForFallback (DEVELOP-34914)", () => {
     }
   });
 
+  it("encodes aiRiskEngines into the get-merge-post fallback body", () => {
+    const next = mergeResourcePolicySettingsForFallback(currentSettings({ note: "keep me" }), {
+      aiRiskEngines: ["chatgpt", "perplexity"],
+    });
+    expect(next.aiRiskEngines).toBe("chatgpt,perplexity");
+    expect(next.note).toBe("keep me");
+    expect(next.cat0).toBe(3);
+  });
+
   it("fills only family members the GET lacked so Gateway POST cannot default them", () => {
     const next = mergeResourcePolicySettingsForFallback(
       { customCategoryId: 1, isZeroTrustResourcePolicy: 1, cat7: 9 },
@@ -133,6 +163,22 @@ describe("assertSparsePatch / verify / 405 detection", () => {
     expect(collectSparseVerifyFailures({ aiRiskEnabled: 1, note: "x" }, { aiRiskEnabled: 1 })).toEqual(
       [],
     );
+  });
+
+  it("verifies aiRiskEngines against the encoded wire string", () => {
+    const all = "chatgpt,claude,gemini,copilot,perplexity";
+    expect(
+      collectSparseVerifyFailures({ aiRiskEngines: all }, { aiRiskEngines: "all" }),
+    ).toEqual([]);
+    expect(
+      collectSparseVerifyFailures(
+        { aiRiskEngines: "chatgpt,claude" },
+        { aiRiskEngines: ["chatgpt", "claude"] },
+      ),
+    ).toEqual([]);
+    expect(
+      collectSparseVerifyFailures({ aiRiskEngines: "chatgpt" }, { aiRiskEngines: ["chatgpt", "claude"] }),
+    ).toEqual(['aiRiskEngines is "chatgpt", expected "chatgpt,claude"']);
   });
 
   it("treats 404/405 as native PATCH unsupported, not 422/403", () => {

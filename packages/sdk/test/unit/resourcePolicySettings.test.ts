@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IbossPolicyTypeError } from "../../src/client/errors.js";
+import { encodeAiRiskEngines, type AiRiskEnginesInput } from "../../src/api/aiRiskEngines.js";
 import { AI_SERVICES_BIT } from "../../src/api/destinations.js";
 import {
   collectVerifyFailures,
@@ -129,11 +130,21 @@ describe("mergeResourcePolicySettings (DEVELOP-34914)", () => {
   });
 
   it("validates aiRiskEngines before POST", () => {
+    expect(() => encodeAiRiskEngines("ChatGPT")).toThrow(/Unknown aiRiskEngines/);
     expect(() =>
-      mergeResourcePolicySettings(currentSettings(), { aiRiskEngines: "ChatGPT" }),
+      mergeResourcePolicySettings(currentSettings(), {
+        aiRiskEngines: "ChatGPT" as unknown as AiRiskEnginesInput,
+      }),
+    ).toThrow(/Unknown aiRiskEngines/);
+    expect(() =>
+      mergeResourcePolicySettings(currentSettings(), { aiRiskEngines: ["ChatGPT"] }),
     ).toThrow(/Unknown aiRiskEngines/);
     const { next } = mergeResourcePolicySettings(currentSettings(), { aiRiskEngines: "all" });
     expect(next.aiRiskEngines).toBe("chatgpt,claude,gemini,copilot,perplexity");
+    const listed = mergeResourcePolicySettings(currentSettings(), {
+      aiRiskEngines: ["chatgpt", "claude"],
+    });
+    expect(listed.next.aiRiskEngines).toBe("chatgpt,claude");
   });
 });
 

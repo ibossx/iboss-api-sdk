@@ -455,7 +455,9 @@ export class PoliciesApi extends SubClient {
    *
    * Composes the sibling purpose-named surfaces: `destinations` is the
    * DEVELOP-34925 body; `settings` is the DEVELOP-34924 sparse patch.
-   * `createLayer` is unchanged and still returns ids only.
+   * `aiRiskEngines` is `"all"` or a slug list and is encoded to the
+   * platform string before POST. `createLayer` is unchanged and still
+   * returns ids only.
    *
    * Default `type` is `"categories"` so destinations are expressable.
    * Allowlist/blocklist + destinations throws `IbossPolicyTypeError` before
@@ -665,6 +667,8 @@ export class PoliciesApi extends SubClient {
    * Equivalent of `PATCH …/resourcePolicies/{id}/settings`. Agents send
    * only changed fields (`{ aiRiskEnabled: 1 }`); omitted keys — including
    * every catN / prioN / bypassSslMitmN member — stay unchanged.
+   * `aiRiskEngines: "all" | string[]` is validated and encoded to the
+   * platform string before the write.
    *
    * Transport (`opts.transport`, default `auto`):
    * 1. Native `PATCH` on the existing settings path (DEVELOP-34921).
