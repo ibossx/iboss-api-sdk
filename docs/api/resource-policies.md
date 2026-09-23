@@ -99,10 +99,39 @@ await client.policies.patchResourcePolicySettings(policy.customCategoryId, {
 | `patchResourcePolicySettings(id, patch, { transport? })` | Sparse update. Default `auto`: native PATCH, then 404/405 get-merge-full-POST. `merge-post` is opt-in. Agents send only changed fields. Re-GETs. |
 | `getResourcePolicyDestinations` / `putResourcePolicyDestinations` | Typed destinations. AI_SERVICES → bit 110 + `categoriesSelectedType: 0`. Reject/warn allowlist+categories — never silent drop. |
 | `setDestination` / `ensureAiSecurityDestination` | Aliases of `putResourcePolicyDestinations` (AI Services shortcut). |
-| `createResourcePolicy({…})` | PUT structure + POST settings + re-GET. Returns `{ customCategoryId, customCategoryNumber, destinations, settings }`. |
+| `createResourcePolicy({…})` | PUT structure + POST settings + re-GET. Returns `{ customCategoryId, customCategoryNumber, destinations, settings, wireKind }`. `kind` / `customType` accept a purpose name, enum string, or matching numeric. |
 | `listPolicies({ kind })` | Purpose-named list. Prefer over `typeFilter=9` / choosing list endpoints. |
 
 `updateLayerSettings(fullBlob)` and `createLayer()` are unchanged full-replace / id-returning APIs.
+
+### `kind` / `customType` (DEVELOP-34958 / 34977)
+
+The same field accepts a purpose kind, the gateway enum, or the matching numeric. The SDK sends the canonical enum (older nodes reject raw numerics). `categories` is **3**. `resourcePoliciesCombined` is **13** — not an alias of categories.
+
+| kind | numeric | enum sent |
+|---|---|---|
+| `blocklist` | 0 | `e_custom_category_type_blacklist` |
+| `allowlist` | 1 | `e_custom_category_type_allowlist` |
+| `categories` | 3 | `e_custom_category_type_categories` |
+| `msTenantRestrictions` | 5 | `e_custom_category_type_ms_tenant_restrictions` |
+| `urlList` | 6 | `e_custom_category_url_list` (`e_custom_category_type_url_list` is accepted) |
+| `parent` | 10 | `e_custom_category_type_parent` |
+| `casb` | 11 | `e_custom_category_type_casb` |
+| `casbParent` | 12 | `e_custom_category_type_casb_parent` |
+| `resourcePoliciesCombined` | 13 | `e_custom_category_type_resource_policies_combined` |
+| `aiPolicy` | 14 | `e_custom_category_type_ai_policy` |
+| `aiPolicyParent` | 15 | `e_custom_category_type_ai_policy_parent` |
+
+```ts
+await client.policies.createResourcePolicy({ name: "URL list", kind: "urlList" });
+await client.policies.createResourcePolicy({ name: "URL list", customType: 6 });
+await client.policies.createResourcePolicy({
+  name: "Parent",
+  customType: "e_custom_category_type_parent",
+});
+```
+
+`urlList`, `parent`, and the other non-bitmap kinds cannot take `destinations`. Use `kind: "categories"` for AI Services. A value outside this allowlist throws before PUT.
 
 ## Endpoints
 

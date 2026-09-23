@@ -66,6 +66,13 @@ export {
   type CreateLayerResult,
   type CreateResourcePolicyParams,
   type CreateResourcePolicyResult,
+  type ResourcePolicyKind,
+  type ResourcePolicyCustomTypeInput,
+  type ResourcePolicyWireKindAnnotation,
+  RESOURCE_POLICY_KINDS,
+  RESOURCE_POLICY_KIND_WIRE,
+  resolveResourcePolicyKind,
+  parseResourcePolicyCustomType,
 } from "./api/policies.js";
 export {
   AI_SERVICES_BIT,

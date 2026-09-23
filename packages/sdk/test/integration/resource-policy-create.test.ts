@@ -134,4 +134,67 @@ describe("createResourcePolicy (DEVELOP-34926)", () => {
       enterpriseOwned: 1,
     });
   });
+
+  it("accepts purpose kind, enum, and numeric, and keeps categories 3 distinct from combined 13", async () => {
+    const state = createMockState();
+    const client = makeClient(state);
+
+    const urlList = await client.policies.createResourcePolicy({
+      name: "URL list",
+      kind: "urlList",
+    });
+    expect(urlList.wireKind).toEqual({
+      kind: "urlList",
+      customType: "e_custom_category_url_list",
+      numeric: 6,
+      listKind: "resourcePolicy",
+      echoedByGateway: true,
+    });
+    expect(urlList.observedCustomType).toBe(6);
+    expect(state.policyLayers[0]).toMatchObject({ customType: "e_custom_category_url_list" });
+    expect(state.layerSettings[0]?.customType).toBe("e_custom_category_url_list");
+
+    const parent = await client.policies.createResourcePolicy({
+      name: "Parent",
+      customType: 10,
+    });
+    expect(parent.wireKind.kind).toBe("parent");
+    expect(parent.wireKind.numeric).toBe(10);
+    expect(parent.observedCustomType).toBe(10);
+    expect(state.policyLayers[1]).toMatchObject({ customType: "e_custom_category_type_parent" });
+
+    const categories = await client.policies.createResourcePolicy({
+      name: "Categories",
+      customType: "e_custom_category_type_categories",
+      destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+    });
+    expect(categories.wireKind.kind).toBe("categories");
+    expect(categories.wireKind.numeric).toBe(3);
+    expect(categories.observedCustomType).toBe(3);
+
+    const combined = await client.policies.createResourcePolicy({
+      name: "Combined",
+      kind: 13,
+    });
+    expect(combined.wireKind.kind).toBe("resourcePoliciesCombined");
+    expect(combined.wireKind.numeric).toBe(13);
+    expect(combined.observedCustomType).toBe(13);
+    expect(combined.observedCustomType).not.toBe(categories.observedCustomType);
+  });
+
+  it("rejects a non-allowlisted customType and urlList destinations before PUT", async () => {
+    const state = createMockState();
+    const client = makeClient(state);
+    await expect(
+      client.policies.createResourcePolicy({ name: "DLP", customType: 9 }),
+    ).rejects.toThrow(/not on the Resource Policy/);
+    await expect(
+      client.policies.createResourcePolicy({
+        name: "URL list",
+        kind: "urlList",
+        destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
+      }),
+    ).rejects.toBeInstanceOf(IbossPolicyTypeError);
+    expect(state.policyLayers).toHaveLength(0);
+  });
 });
