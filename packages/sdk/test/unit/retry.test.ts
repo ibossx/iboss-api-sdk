@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { backoffDelay, DEFAULT_RETRY, isIdempotent, shouldRetryStatus } from "../../src/client/retry.js";
 
 describe("retry policy", () => {
-  it("treats GET/PUT/DELETE as idempotent, POST as not", () => {
+  it("treats GET/PUT/DELETE/PATCH as idempotent, POST as not", () => {
     expect(isIdempotent("GET")).toBe(true);
     expect(isIdempotent("PUT")).toBe(true);
     expect(isIdempotent("DELETE")).toBe(true);
+    expect(isIdempotent("PATCH")).toBe(true);
     expect(isIdempotent("POST")).toBe(false);
   });
 

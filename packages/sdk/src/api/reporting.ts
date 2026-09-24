@@ -1,6 +1,11 @@
 /**
  * Reporting, incident settings, drill-down reports, and URL event logs
  * (reporter tier).
+ *
+ * AI Security Governance conversations are on `client.governance`
+ * (`listAiConversations` / `getAiConversation`). This module does not wrap
+ * `/ibreports/web/aiSecurityGovernance/conversations` — use
+ * `client.raw("reporter", …)` if you need the opaque query unchanged.
  */
 import { SubClient, type EntriesResponse, type SuccessResponse } from "./base.js";
 

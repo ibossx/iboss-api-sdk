@@ -103,3 +103,48 @@ export class IbossNetworkError extends IbossError {
     this.cause = cause;
   }
 }
+
+/**
+ * A settings POST reported success but a follow-up GET did not show the
+ * intended fields (bitmap bit, categoriesSelectedType, dlpPolicyMethod, …).
+ * Empty `saveIgnoredEntries` is not persistence — always re-GET.
+ */
+export class IbossVerifyError extends IbossError {
+  readonly customCategoryId?: number;
+  readonly failures: string[];
+  readonly actual?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    opts?: {
+      customCategoryId?: number;
+      failures?: string[];
+      actual?: Record<string, unknown>;
+    },
+  ) {
+    super(message);
+    this.customCategoryId = opts?.customCategoryId;
+    this.failures = opts?.failures ?? [];
+    this.actual = opts?.actual;
+  }
+}
+
+/**
+ * Typed destinations cannot be expressed on this policy.
+ *
+ * Allowlist/blocklist (and the equivalent destination mode) combined with a
+ * non-empty categories bitmap is not a wire error: Gateway POST
+ * `/json/controls/policyLayers/settings` returns 200 and silently drops the
+ * bitmap (`categories` length 0, including AI Services bit 110). The SDK
+ * throws this before send. Delete and recreate as categories-type.
+ */
+export class IbossPolicyTypeError extends IbossError {
+  readonly customCategoryId?: number;
+  readonly customType?: unknown;
+
+  constructor(message: string, opts?: { customCategoryId?: number; customType?: unknown }) {
+    super(message);
+    this.customCategoryId = opts?.customCategoryId;
+    this.customType = opts?.customType;
+  }
+}

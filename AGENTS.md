@@ -29,9 +29,16 @@ When the user describes an automation they want:
      npx iboss init
      ```
 
-1. **Find the right APIs.** Check [docs/api/README.md](docs/api/README.md) —
-   the index maps each doc to its admin-console section — then read the
-   specific doc (e.g.
+1. **Find the right APIs.** For the purpose-named agent surfaces
+   (settings patch `auto`, destinations `AI_SERVICES`, create+verify,
+   `listPolicies` kinds, governance conversations) start with
+   [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Read
+   [docs/api/agent-footguns.md](docs/api/agent-footguns.md) before a
+   sparse POST, allowlist+categories write, or governance query. Evening
+   stack merge/review order (Gateway 34921 then 34923; SDK recon #8):
+   [docs/api/merge-order.md](docs/api/merge-order.md). Then
+   check [docs/api/README.md](docs/api/README.md) — the index maps each
+   doc to its admin-console section — and the specific doc (e.g.
    [docs/api/resource-policies.md](docs/api/resource-policies.md)). The
    sub-client sources in `packages/sdk/src/api/` are the ground truth for
    method signatures. Note the platform has four policy types that share one
@@ -85,13 +92,53 @@ examples/                  small runnable library scripts
   (`/ibcloud/web/...`), gateway node (`/json/...`), reporter node
   (`/ibreports/web/...`). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Policy creation is two-step** (create structure → apply settings).
-  `client.policies.createLayer()` wraps it — don't hand-roll it.
+  `client.policies.createLayer()` wraps it and still returns ids only.
+  Agents creating Resource Policies should use
+  `createResourcePolicy()` (DEVELOP-34926) which re-GETs effective
+  settings. Don't hand-roll the two-step.
 - **Typed errors:** `IbossAuthError` (bad key), `IbossXsrfError` (403 —
   usually XSRF, not permissions), `IbossSubscriptionError` (422 — account
-  lacks the module; check `ctx.account.subscriptionFlags`). See
-  [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
-- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)`.
-  To wrap a new endpoint properly, follow the `add-api-client` skill.
+  lacks the module; check `ctx.account.subscriptionFlags`),
+  `IbossVerifyError` (write reported success but re-GET did not persist),
+  `IbossPolicyTypeError` (allowlist/blocklist cannot express destinations).
+  See [docs/api/errors-and-gotchas.md](docs/api/errors-and-gotchas.md).
+- **Unwrapped endpoints:** use `client.raw(tier, method, path, opts)` or
+  `client.raw(method, path)` (tier inferred from `/json` vs `/ibreports`
+  vs `/ibcloud`). To wrap a new endpoint properly, follow the
+  `add-api-client` skill.
+- **Agent Resource Policy helpers:** `IbossClient.fromEnv()` /
+  `fromProfile()`; `getResourcePolicySettings` /
+  `patchResourcePolicySettings` (DEVELOP-34924: `transport: "auto"` is
+  native PATCH → 404/405 get-merge-full-POST; POST `?merge=1` is
+  `transport: "merge-post"` opt-in only); `putResourcePolicyDestinations`
+  / `getResourcePolicyDestinations` / `setDestination` /
+  `ensureAiSecurityDestination` (AI_SERVICES → bit 110; allowlist +
+  categories reject/warn, never silent drop); `createResourcePolicy`
+  returns the verified re-GET shape. Copy-paste:
+  [docs/api/agent-quickstart.md](docs/api/agent-quickstart.md). Detail:
+  [docs/api/resource-policies.md](docs/api/resource-policies.md).
+- **`listPolicies({ kind })`:** purpose-named policy query
+  (DEVELOP-34927). Do not guess `typeFilter=9` or choose between
+  `resourcePolicies` and `policyLayers/all`. Helpers:
+  `listDlpPolicies` / `listAiSecurityPolicies`. See
+  [docs/api/policies-by-kind.md](docs/api/policies-by-kind.md).
+- **AI Governance conversations:** `client.governance.listAiConversations`
+  / `getAiConversation` (DEVELOP-34930). UTC intervals, ~15m reporter
+  lag, `textContains` / vendor filtered in the SDK, domains and bodies
+  redacted. Separate from policy-kind lists. See
+  [docs/api/ai-governance-conversations.md](docs/api/ai-governance-conversations.md).
+- **Agent footguns:** Gateway wipe-on-omit POST, allowlist/blocklist +
+  categories silent drop, POST 200 / empty `saveIgnoredEntries`, magic
+  `typeFilter=9`, opaque governance epochs / ~15m lag. See
+  [docs/api/agent-footguns.md](docs/api/agent-footguns.md).
+- **Evening-stack merge order:** Gateway
+  DEVELOP-34921 (lockboxLinux #6340) then DEVELOP-34923 (#6344). SDK:
+  prefer reconcile #8 as the integration branch; per-ticket #2–#7 stay
+  review surfaces; docs #9 then #10 stack on reconcile. Clash winners:
+  settings=#3, destinations=#4, create=#5, `listPolicies`=#6,
+  governance=#7, defaults=#2. Live QA blocked while test-gateway-14800
+  is held for DEVELOP-34920. See
+  [docs/api/merge-order.md](docs/api/merge-order.md).
 - **Repeatable org procedures:** when the user describes a recurring runbook
   (not a one-off automation), package it with the `create-skill` skill so it
   becomes a reusable recipe in `.claude/skills/`.
