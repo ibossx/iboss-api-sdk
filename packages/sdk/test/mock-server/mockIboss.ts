@@ -7,6 +7,7 @@
  * no listener/port required.
  */
 import { Hono } from "hono";
+import { parseResourcePolicyCustomType } from "../../src/api/resourcePolicyKinds.js";
 import {
   CLOUD_HOST,
   CLOUD_XSRF,
@@ -108,9 +109,8 @@ export function createMockState(): MockState {
 }
 
 function wireCustomType(createType: unknown): unknown {
-  if (createType === "e_custom_category_type_allowlist") return 1;
-  if (createType === "e_custom_category_type_categories") return 3;
-  if (createType === "e_custom_category_type_blacklist") return 0;
+  const wire = parseResourcePolicyCustomType(createType);
+  if (wire) return wire.numeric;
   return createType;
 }
 
@@ -292,14 +292,13 @@ export function createMockIboss(state: MockState): Hono {
         const stored = state.settingsById[id];
         if (!layer && !stored) return c.json({ message: "not found" }, 404);
         const customType = wireCustomType(layer?.customType ?? stored?.customType);
-        // After a settings POST, some live GETs report 13 instead of 3 — both are categories-shaped.
-        const afterUpdate = stored && customType === 3 ? 13 : customType;
+        // categories stays 3. 13 is only resourcePoliciesCombined (DEVELOP-34977).
         const body: Record<string, unknown> = {
           ...(layer ?? {}),
           ...(stored ?? {}),
           customCategoryId: id,
-          customType: afterUpdate,
-          categoryType: afterUpdate,
+          customType,
+          categoryType: customType,
         };
         if (state.dropPatchFieldsOnRead) {
           delete body.aiRiskEnabled;
@@ -312,7 +311,24 @@ export function createMockIboss(state: MockState): Hono {
         const id = state.nextLayerId++;
         const layer = { ...body, customCategoryId: id, customCategoryNumber: id + 1000 };
         state.policyLayers.push(layer);
-        return c.json({ customCategoryId: id, customCategoryNumber: id + 1000, id, successful: true });
+        const wire = parseResourcePolicyCustomType(body.customType);
+        const isResource =
+          body.isZeroTrustResourcePolicy === 1 || body.isZeroTrustResourcePolicy === "1";
+        const echo = wire
+          ? {
+              customType: wire.numeric,
+              enum: wire.customType,
+              listKind: isResource ? "resourcePolicy" : "policyLayer",
+            }
+          : {};
+        return c.json({
+          customCategoryId: id,
+          customCategoryNumber: id + 1000,
+          id,
+          successful: true,
+          message: "Successfully added custom category.",
+          ...echo,
+        });
       });
       const applySettingsWrite = (
         method: string,
