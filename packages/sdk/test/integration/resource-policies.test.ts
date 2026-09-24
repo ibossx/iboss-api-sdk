@@ -28,7 +28,7 @@ describe("resource-policy get-merge-post fallback (DEVELOP-34914)", () => {
       created.customCategoryId,
       {
         aiRiskEnabled: 1,
-        aiRiskEngines: "chatgpt",
+        aiRiskEngines: ["chatgpt"],
         linkPolicyToAllSubjects: 1,
       },
       { transport: "get-merge-post" },
@@ -162,7 +162,7 @@ describe("typed destinations (DEVELOP-34916 / 34925)", () => {
       name: "AI Security",
       destinations: { mode: "selectedWebCategories", categories: ["AI_SERVICES"] },
       aiRiskEnabled: true,
-      aiRiskEngines: "chatgpt",
+      aiRiskEngines: ["chatgpt"],
       aiRiskMonitoringMessage: "AI use is monitored.",
       aiRiskMonitoringMessageEnabled: true,
       aiRiskMonitoringMessageTitle: "Warning",
