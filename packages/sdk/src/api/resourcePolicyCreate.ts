@@ -35,6 +35,18 @@ import {
   ensureFieldFamilies,
   isGeneratedSettingsFamilyKey,
 } from "./policyFields.js";
+import {
+  annotateResourcePolicyKind,
+  applyGatewayCreateEcho,
+  assertKindCanCarryDestinations,
+  assertResourcePolicyCustomType,
+  customTypeMatchesKind,
+  parseResourcePolicyCustomType,
+  resolveResourcePolicyKind,
+  type ResourcePolicyCustomTypeInput,
+  type ResourcePolicyKindWire,
+  type ResourcePolicyWireKindAnnotation,
+} from "./resourcePolicyKinds.js";
 
 /** Today's gateway settings path. There is no distinct resourcePolicies POST yet. */
 export const RESOURCE_POLICY_SETTINGS_WIRE_PATH = "/json/controls/policyLayers/settings";
@@ -68,10 +80,24 @@ export interface CreateResourcePolicyParams {
   /** Sparse settings (DEVELOP-34924). Merged over create defaults. */
   settings?: ResourcePolicySettingsPatch;
   /**
+   * Purpose kind, gateway enum, or matching numeric (DEVELOP-34977).
+   * Same tokens as `customType`. `urlList` is 6, `parent` is 10,
+   * `categories` is 3, `resourcePoliciesCombined` is 13.
+   * The SDK sends the canonical enum. May be combined with `type` or
+   * `customType` only when they name the same kind.
+   */
+  kind?: ResourcePolicyCustomTypeInput;
+  /**
    * Defaults to `"categories"` so destinations are expressable. Pass
    * `"allowlist"` for CASB-style policies and omit destinations.
+   * Prefer `kind` or `customType` for kinds that are not layer types.
    */
   type?: "blocklist" | "allowlist" | "categories";
+  /**
+   * Resource Policy allowlist value: purpose kind, enum string, or numeric.
+   * Same field accepts either form (`6` and `e_custom_category_url_list`).
+   */
+  customType?: ResourcePolicyCustomTypeInput;
   enterpriseOwned?: 0 | 1;
   placeAtPosition?: number;
   /** Subject linking; also accepted inside `settings`. Default 1 (everyone). */
@@ -99,11 +125,21 @@ export interface CreateResourcePolicyResult {
   customCategoryName?: string;
   destinations: ResourcePolicyDestinations;
   settings: Record<string, unknown>;
+  /**
+   * Kind that was sent, overlaid with the PUT echo when Gateway returns
+   * `{ customType, enum, listKind }`. `echoedByGateway` stays false on nodes
+   * that omit that echo.
+   */
+  wireKind: ResourcePolicyWireKindAnnotation;
+  /** `customType` from the verifying GET (enum or numeric alias). */
+  observedCustomType?: unknown;
 }
 
 export interface CreateVerifyExpectation {
   destinations?: DestinationVerifyExpectation;
   fields: Record<string, unknown>;
+  /** When set, GET customType must be this kind's enum or its numeric. */
+  wireKind?: ResourcePolicyKindWire;
 }
 
 const WIRE_DESTINATION_KEYS = new Set(["categories", "categoriesSelectedType", "destinations"]);
@@ -138,12 +174,13 @@ export function assertCreateSettingsPatch(settings?: ResourcePolicySettingsPatch
       );
     }
   }
+  assertResourcePolicyCustomType(settings.customType, "createResourcePolicy settings.customType");
 }
 
 function normalizeSettingsFields(patch: ResourcePolicySettingsPatch): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined || WIRE_DESTINATION_KEYS.has(key)) continue;
+    if (value === undefined || WIRE_DESTINATION_KEYS.has(key) || key === "customType") continue;
     if (key === "aiRiskEngines" && value !== null) {
       fields.aiRiskEngines = encodeAiRiskEngines(value as AiRiskEnginesInput | string);
       continue;
@@ -187,7 +224,14 @@ export function omitGeneratedSettingsFamilies(
 export function viewCreatedResourcePolicy(
   persisted: Record<string, unknown>,
   view: "summary" | "full" = "summary",
+  wireKind?: ResourcePolicyKindWire,
+  createResponse?: unknown,
 ): CreateResourcePolicyResult {
+  const observedCustomType = persisted.customType ?? persisted.categoryType;
+  const wire =
+    wireKind ??
+    parseResourcePolicyCustomType(observedCustomType) ??
+    resolveResourcePolicyKind({});
   return {
     customCategoryId: Number(persisted.customCategoryId),
     customCategoryNumber: Number(persisted.customCategoryNumber),
@@ -195,6 +239,8 @@ export function viewCreatedResourcePolicy(
       typeof persisted.customCategoryName === "string" ? persisted.customCategoryName : undefined,
     destinations: decodeDestinations(persisted),
     settings: view === "full" ? persisted : omitGeneratedSettingsFamilies(persisted),
+    wireKind: applyGatewayCreateEcho(annotateResourcePolicyKind(wire), createResponse),
+    observedCustomType,
   };
 }
 
@@ -213,15 +259,35 @@ export function buildCreateResourcePolicySettings(params: {
   customCategoryNumber: number;
   name: string;
   type: "blocklist" | "allowlist" | "categories";
+  /**
+   * Already-resolved kind. When set, `type` is only the layer-type fallback
+   * and is not checked again (urlList has no layer type).
+   */
+  wire?: ResourcePolicyKindWire;
+  /** Purpose kind, enum, or numeric. Ignored when `wire` is set. */
+  kind?: ResourcePolicyCustomTypeInput;
+  /** Purpose kind, enum, or numeric. Ignored when `wire` is set. */
+  customType?: ResourcePolicyCustomTypeInput;
   destinations?: DestinationSpec;
   settings: ResourcePolicySettingsPatch;
 }): BuiltCreateSettings {
-  const customType =
-    params.type === "blocklist"
-      ? "e_custom_category_type_blacklist"
-      : params.type === "allowlist"
-        ? "e_custom_category_type_allowlist"
-        : "e_custom_category_type_categories";
+  const wire =
+    params.wire ??
+    (params.kind !== undefined || params.customType !== undefined
+      ? resolveResourcePolicyKind({ kind: params.kind, customType: params.customType })
+      : resolveResourcePolicyKind({ type: params.type }));
+  const customType = wire.customType;
+  if (params.settings.customType !== undefined) {
+    const fromSettings = parseResourcePolicyCustomType(params.settings.customType);
+    if (fromSettings && fromSettings.kind !== wire.kind) {
+      throw new TypeError(
+        `createResourcePolicy settings.customType ${JSON.stringify(params.settings.customType)} ` +
+          `conflicts with kind "${wire.kind}" (${customType} / ${wire.numeric}). ` +
+          `Set kind or customType instead of settings.customType.`,
+      );
+    }
+  }
+  if (params.destinations) assertKindCanCarryDestinations(wire);
 
   const seed: Record<string, unknown> = {
     customCategoryId: params.customCategoryId,
@@ -267,6 +333,7 @@ export function buildCreateResourcePolicySettings(params: {
 
   const verify: CreateVerifyExpectation = {
     destinations: destinationVerify,
+    wireKind: wire,
     fields: {
       dlpPolicyMethod: body.dlpPolicyMethod,
       customCategoryName: params.name,
@@ -293,6 +360,14 @@ export function collectCreateVerifyFailures(
   const failures: string[] = [];
   if (expected.destinations) {
     failures.push(...collectDestinationVerifyFailures(actual, expected.destinations));
+  }
+  if (expected.wireKind && !customTypeMatchesKind(actual.customType ?? actual.categoryType, expected.wireKind)) {
+    const wire = expected.wireKind;
+    failures.push(
+      `customType is ${JSON.stringify(actual.customType ?? actual.categoryType)}, expected ` +
+        `${wire.kind} enum ${wire.customType} or numeric ${wire.numeric} ` +
+        `(categories is 3; resourcePoliciesCombined is 13)`,
+    );
   }
   for (const [key, value] of Object.entries(expected.fields)) {
     if (value === undefined || value === null) continue;

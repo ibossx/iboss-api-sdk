@@ -45,9 +45,12 @@ export const POLICY_TYPE_FILTER = {
 export const POLICY_CUSTOM_TYPE = {
   blocklist: 0,
   allowlist: 1,
-  /** Categories-type; AI Security destinations use this (or 13). */
+  /** Categories-type Resource Policy (`e_custom_category_type_categories`). */
   categories: 3,
-  /** Alternate GET value for categories (Bug Replicator traces). */
+  /**
+   * `e_custom_category_type_resource_policies_combined` — purpose kind
+   * `resourcePoliciesCombined`. Not an alias of categories (3).
+   */
   categoriesAlt: 13,
   dlp: 9,
   connector: 12,
