@@ -56,7 +56,7 @@ export interface MockState {
   /** Force 5xx on the next N matching GETs of this path (transient-failure tests). */
   failNextGets: { path: string; remaining: number } | null;
   /**
-   * When false, PATCH /policyLayers/settings returns 405 (pre-34921 gateway).
+   * When false, PATCH /policyLayers/settings returns 405 (node without native PATCH).
    * Auto SDK path then falls back to get→merge→full POST.
    */
   nativeSettingsPatch: boolean;
@@ -122,7 +122,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** RFC 7396 JSON Merge Patch (mirrors Gateway DEVELOP-34921). */
+/** RFC 7396 JSON Merge Patch for settings PATCH and POST ?merge=1. */
 function mergePatch(target: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...target };
   for (const [key, value] of Object.entries(patch)) {
@@ -350,7 +350,7 @@ export function createMockIboss(state: MockState): Hono {
         const body = await c.req.json<Record<string, unknown>>();
         const merge = c.req.query("merge");
         if (merge === "1" && !state.nativeSettingsMergePost) {
-          // Pre-34921: ignore merge and full-replace (wipe-on-omit).
+          // Older nodes: ignore merge and full-replace (wipe-on-omit).
           return c.json(applySettingsWrite("POST", undefined, body));
         }
         return c.json(applySettingsWrite("POST", merge, body));

@@ -1,15 +1,15 @@
 /**
- * SDK-only get → deep-merge → POST for Resource Policy settings
- * (DEVELOP-34914). There is no native Gateway PATCH.
+ * GET → deep-merge → full POST for Resource Policy settings when native
+ * PATCH is unavailable.
  *
- * Wire path (unchanged):
+ * Wire path:
  *   GET  /json/controls/policyLayers/settings?customCategoryId=…
  *   POST /json/controls/policyLayers/settings   body = full merged object
  *
- * Gateway POST applies defaults for missing fields (DEVELOP-34251 /
- * DEVELOP-32482), so the POST body must round-trip the entire GET blob
- * including catN / prioN / bypassSslMitmN. Omitted patch keys keep prior
- * values. TOCTOU between GET and POST is accepted for agent v1.
+ * A plain gateway POST applies defaults for missing fields, so the POST
+ * body must round-trip the entire GET blob including catN / prioN /
+ * bypassSslMitmN. Omitted patch keys keep prior values. TOCTOU between
+ * GET and POST is accepted on this fallback path.
  *
  * POST success (including empty saveIgnoredEntries) is not persistence —
  * callers re-GET and verify.

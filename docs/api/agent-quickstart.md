@@ -1,9 +1,8 @@
 # Agent API quickstart
 
-Copy-paste TypeScript for the purpose-named SDK surfaces. **SDK-only** —
-this repo does not change lockboxLinux / Gateway / reporter. Wire paths
-today are still `/json/controls/policyLayers*` and
-`/ibreports/web/aiSecurityGovernance/conversations`.
+Copy-paste TypeScript for the purpose-named SDK surfaces. Wire paths are
+`/json/controls/policyLayers*` on the gateway and
+`/ibreports/web/aiSecurityGovernance/conversations` on the reporter.
 
 Deep dives: [resource-policies.md](resource-policies.md) (settings,
 destinations, create), [policies-by-kind.md](policies-by-kind.md),
@@ -80,11 +79,12 @@ Send only changed fields. Omitted keys — including every `catN` /
 
 Default `transport: "auto"`:
 
-1. Native `PATCH` (DEVELOP-34921, live on lab gateways).
-2. If PATCH is 404/405, GET → deep-merge → **full** POST (DEVELOP-34914).
+1. Native `PATCH` when the node supports it.
+2. If PATCH is 404/405, GET → deep-merge → **full** POST.
 
-POST `?merge=1` is `transport: "merge-post"` **opt-in only**. `auto`
-must not send it: a pre-34921 gateway ignores `merge` and wipe-on-omits.
+POST `?merge=1` is `transport: "merge-post"` **opt-in only**. Older nodes
+that ignore `?merge=1` will wipe on omit — never send merge unless you
+know the node supports it; prefer transport auto.
 
 ```ts
 const settings = await client.policies.patchResourcePolicySettings(

@@ -103,7 +103,7 @@ describe("mergePatch (RFC 7396)", () => {
   });
 });
 
-describe("mergeResourcePolicySettingsForFallback (DEVELOP-34914)", () => {
+describe("mergeResourcePolicySettingsForFallback", () => {
   it("omit-safe: omitted patch fields keep prior GET values, including full families", () => {
     const current = currentSettings({
       cat7: 9,

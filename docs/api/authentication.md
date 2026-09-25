@@ -17,7 +17,7 @@ const client = new IbossClient({
 });
 await client.connect();
 
-// Same headers, less boilerplate (DEVELOP-34913):
+// Same headers, less boilerplate:
 const fromEnv = IbossClient.fromEnv();
 // IBOSS_API_KEY, IBOSS_CLOUD_DOMAIN, optional IBOSS_ACCOUNT_ID,
 // IBOSS_GATEWAY_HOST / IBOSS_GATEWAY_URL, IBOSS_REPORTER_HOST / IBOSS_REPORTER_URL

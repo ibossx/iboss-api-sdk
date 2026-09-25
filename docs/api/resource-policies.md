@@ -40,35 +40,33 @@ same endpoints but have `isZeroTrustResourcePolicy: 0`.)
 `client.policies.createLayer({ isZeroTrustResourcePolicy: 1, ... })` performs
 both steps and injects `dlpPolicyMethod: 2` and the field families for you.
 
-## Agent helpers (DEVELOP-34914 / 34916 / 34924 / 34925 / 34926)
+## Agent helpers
 
-**SDK-only.** This repo does not change lockboxLinux / Gateway.
-`patchResourcePolicySettings` default `transport: "auto"` prefers native
-Gateway PATCH (DEVELOP-34921, live on lab). If PATCH is 404/405 it falls
-back to get → deep-merge → **full** POST (DEVELOP-34914):
+`patchResourcePolicySettings` default `transport: "auto"` uses native
+PATCH when the node supports it. If PATCH is 404/405 it falls back to
+get → deep-merge → **full** POST:
 
 ```
-PATCH /json/controls/policyLayers/settings?customCategoryId=…   (34921)
+PATCH /json/controls/policyLayers/settings?customCategoryId=…
 GET   /json/controls/policyLayers/settings?customCategoryId=…   ↘ fallback
 POST  /json/controls/policyLayers/settings    body = merged GET + patch
 ```
 
-POST `?merge=1` is `transport: "merge-post"` **opt-in only**. `auto` must
-not send it: a pre-34921 gateway ignores `merge` and wipe-on-omits.
+POST `?merge=1` is `transport: "merge-post"` **opt-in only**. Older nodes
+that ignore `?merge=1` will wipe on omit — never send merge unless you
+know the node supports it; prefer transport auto.
 
-Gateway POST applies defaults for omitted fields (same class as
-[DEVELOP-34251](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-34251)
-and [DEVELOP-32482](https://ibosscybersecurity.atlassian.net/browse/DEVELOP-32482)),
-so a partial body via `updateLayerSettings` would wipe `catN` / `prioN` /
-`bypassSslMitmN`. Omitted patch keys **keep prior values**. The GET→merge→POST
-race (TOCTOU) is accepted for agent v1 on the fallback path.
+A plain gateway POST applies defaults for omitted fields, so a partial
+body via `updateLayerSettings` would wipe `catN` / `prioN` /
+`bypassSslMitmN`. Omitted patch keys **keep prior values**. The
+GET→merge→POST race (TOCTOU) is accepted on the fallback path.
 
 Agents should not send the 400-char `categories` bitmap or invent
-`categoriesSelectedType`. Sep 9–10 Bug Replicator traces: the settings POST
-that **stuck** used `categoriesSelectedType: 0` (UI “Selected Destinations”)
-and a 400-char bitmap with **only bit 110** set (AI Services). Allowlist
-recreate (`customType: 1`) **silently drops** that bitmap — later POSTs can
-flip `aiRiskEnabled: 1` and still leave destinations empty. The SDK
+`categoriesSelectedType`. The settings POST that persists destinations
+uses `categoriesSelectedType: 0` (UI “Selected Destinations”) and a
+400-char bitmap with **only bit 110** set (AI Services). Allowlist
+recreate (`customType: 1`) **silently drops** that bitmap — later POSTs
+can flip `aiRiskEnabled: 1` and still leave destinations empty. The SDK
 **rejects** (or `onWrongType: "warn"`) that combination. POST success
 (including empty `saveIgnoredEntries`) is **not** persistence.
 
@@ -146,10 +144,11 @@ Gotchas:
   body field named **`resourceIds`** — both ids are required.
 - `dlpPolicyMethod: 2` is mandatory in every Resource Policy settings
   payload; omitting it produces broken policies.
-- **`patchResourcePolicySettings` default `auto`:** native PATCH first
-  (DEVELOP-34921); 404/405 → get-merge-full-POST (DEVELOP-34914). POST
-  `?merge=1` is opt-in (`transport: "merge-post"`) only. TOCTOU on the
-  fallback is accepted for agent v1.
+- **`patchResourcePolicySettings` default `auto`:** native PATCH when the
+  node supports it; 404/405 falls back to get-merge-full-POST. POST
+  `?merge=1` is opt-in (`transport: "merge-post"`) only. Older nodes
+  that ignore `?merge=1` will wipe on omit. TOCTOU on the fallback is
+  accepted.
 - CASB-control policies are allowlist-type Resource Policies with
   `enterpriseOwned: 1`.
 - Group-targeted policies: `linkPolicyToAllSubjects: 0` +

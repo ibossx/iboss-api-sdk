@@ -1,10 +1,10 @@
 /**
- * Typed destinations for Resource Policy settings (DEVELOP-34925 / 34916).
+ * Typed destinations for Resource Policy settings.
  *
  * Agents must never invent the 400-char `categories` bitmap or the inverted
- * `categoriesSelectedType` enum. Sep 9–10 Bug Replicator traces: the settings
- * POST that stuck used `categoriesSelectedType: 0` (UI “Selected Destinations”)
- * and a 400-char bitmap with **only bit 110** set (AI Services). Allowlist
+ * `categoriesSelectedType` enum. The settings POST that persists destinations
+ * uses `categoriesSelectedType: 0` (UI “Selected Destinations”) and a
+ * 400-char bitmap with **only bit 110** set (AI Services). Allowlist
  * recreate (`customType: 1`) silently drops the bitmap — GET `categories`
  * length 0 — so typed helpers reject that combination.
  *
@@ -12,15 +12,15 @@
  *   PUT …/resourcePolicies/{id}/destinations
  *   { mode: "selectedWebCategories", categories: ["AI_SERVICES"] }
  *
- * Wire today is still GET/POST `/json/controls/policyLayers/settings`. Legacy
+ * Wire path is GET/POST `/json/controls/policyLayers/settings`. Legacy
  * `categories` / `categoriesSelectedType` fields remain for old clients.
  *
  * Allowlist (customType 1 / `e_custom_category_type_allowlist`, and the same
  * mode under `destinationMode` or `categoryType`) plus a non-empty categories
  * bitmap does **not** fail on the wire. Gateway POST returns 200 and silently
  * drops the bitmap (`categories` length 0), including AI Services bit 110.
- * Confirmed on test-gateway-14800 (2026-09-22). `assertCategoriesBitmapExpressable`
- * is the guard — it throws `IbossPolicyTypeError` before send.
+ * `assertCategoriesBitmapExpressable` is the guard — it throws
+ * `IbossPolicyTypeError` before send.
  */
 import { IbossPolicyTypeError } from "../client/errors.js";
 
@@ -185,8 +185,7 @@ export function readCustomType(settings: Record<string, unknown>): unknown {
  *
  * The gateway does not reject this combination. POST
  * `/json/controls/policyLayers/settings` returns 200 and the following GET
- * has `categories` length 0 (bit 110 included). Confirmed 2026-09-22 on
- * test-gateway-14800. Callers must throw before send.
+ * has `categories` length 0 (bit 110 included). Callers must throw before send.
  */
 export function destinationTypeConflict(settings: Record<string, unknown>): string | undefined {
   const listMode = readListDestinationMode(settings);

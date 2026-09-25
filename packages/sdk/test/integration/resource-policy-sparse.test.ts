@@ -30,7 +30,7 @@ function stampDistinctiveFamilies(stored: Record<string, unknown>) {
   stored.note = "keep me";
 }
 
-describe("sparse resource-policy settings (DEVELOP-34924)", () => {
+describe("sparse resource-policy settings", () => {
   it("GET summary hides generated families; full view keeps them", async () => {
     const state = createMockState();
     const client = makeClient(state);
@@ -105,7 +105,7 @@ describe("sparse resource-policy settings (DEVELOP-34924)", () => {
     expect(state.requests.some((r) => r.startsWith("PATCH "))).toBe(false);
   });
 
-  it("auto falls back to get-merge-post when PATCH is 405 (pre-34921)", async () => {
+  it("auto falls back to get-merge-post when PATCH is 405", async () => {
     const state = createMockState();
     state.nativeSettingsPatch = false;
     const client = makeClient(state);

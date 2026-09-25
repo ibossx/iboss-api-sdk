@@ -1,19 +1,20 @@
 # Agent API footguns (negative paths)
 
-Five ways agents lose data or query the wrong thing. **SDK-only** — this
-repo does not change lockboxLinux / Gateway / reporter. Positive
-copy-paste: [agent-quickstart.md](agent-quickstart.md).
+Five ways agents lose data or query the wrong thing. Positive copy-paste:
+[agent-quickstart.md](agent-quickstart.md).
 
 ## 1. Sparse POST without merge/PATCH still wipes
 
 Gateway `POST /json/controls/policyLayers/settings` is a **full replace**.
-Omitted `catN` / `prioN` / `bypassSslMitmN` / `categories` are defaulted
-(DEVELOP-34251 / DEVELOP-32482). A one-field POST is a wipe.
+Omitted `catN` / `prioN` / `bypassSslMitmN` / `categories` are defaulted.
+A one-field POST is a wipe.
 
-POST `?merge=1` is **not** safe by default. A pre-34921 gateway ignores
-`merge` and still wipe-on-omits. That is why `patchResourcePolicySettings`
-default `transport: "auto"` uses native PATCH, then 404/405
-get-merge-**full**-POST. `transport: "merge-post"` is opt-in only.
+POST `?merge=1` is **not** safe by default. Older nodes that ignore
+`?merge=1` will wipe on omit — never send merge unless you know the node
+supports it; prefer transport auto. That is why
+`patchResourcePolicySettings` default `transport: "auto"` uses native
+PATCH when the node supports it, then 404/405 get-merge-**full**-POST.
+`transport: "merge-post"` is opt-in only.
 
 **Don't**
 
@@ -26,7 +27,7 @@ await client.policies.updateLayerSettings({
 });
 
 await client.raw("gateway", "POST", "/json/controls/policyLayers/settings", {
-  query: { customCategoryId, merge: 1 }, // ignored on pre-34921 → wipe
+  query: { customCategoryId, merge: 1 }, // ignored on older nodes → wipe
   body: { aiRiskEnabled: 1 },
 });
 ```

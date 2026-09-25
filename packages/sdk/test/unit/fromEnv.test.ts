@@ -7,7 +7,7 @@ import { hostnameFromEnvValue, inferHostTier } from "../../src/client/hosts.js";
 import { CLOUD_HOST, GATEWAY_HOST, MOCK_API_KEY, REPORTER_HOST } from "../mock-server/fixtures.js";
 import { createMockState, mockFetch } from "../mock-server/mockIboss.js";
 
-describe("inferHostTier (DEVELOP-34913)", () => {
+describe("inferHostTier", () => {
   it("routes /json and /bulk to gateway, /ibreports to reporter", () => {
     expect(inferHostTier("/json/controls/policyLayers/settings")).toBe("gateway");
     expect(inferHostTier("/bulk/controls/policyLayers/urls")).toBe("gateway");

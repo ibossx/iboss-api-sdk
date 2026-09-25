@@ -8,9 +8,9 @@
 > gateway or cloud host fails with the **same** API key — wrong tier, not a
 > bad credential.
 
-This is the dedicated conversation list/get (DEVELOP-34930). Policy-kind
-lists (`listPolicies({ kind })`, `listDlpPolicies`, `listAiSecurityPolicies`)
-are a separate API (DEVELOP-34927 / 34915 policy leftovers).
+These methods list and get conversations. Policy-kind lists
+(`listPolicies({ kind })`, `listDlpPolicies`, `listAiSecurityPolicies`)
+are a separate API.
 
 ## Agent API
 
@@ -30,10 +30,9 @@ array** — never `null`, even when the reporter sends a null `conversations`
 body. List rows are summaries: `messages` is `[]` because wire
 `userRequest` / `aiResponse` are often null. Use `get` for `messages[]`.
 
-## Wire today (unchanged)
+## Wire path
 
-There is no `GET /aiGovernance/conversations` HTTP sibling yet. The SDK
-methods wrap the existing reporter search:
+The SDK methods wrap the existing reporter search:
 
 ```
 GET {reporter}/ibreports/web/aiSecurityGovernance/conversations
@@ -62,11 +61,11 @@ surface.
 a `Date`. Date-only `YYYY-MM-DD` is UTC midnight. The SDK sends UTC unix
 milliseconds as `intervalStartTime` / `intervalEndTime`.
 
-Sep 9–10 2026 traces used values around `1789012800000`
-(`2026-09-10T04:00:00.000Z`). Those are UTC milliseconds — not seconds, and
-not a local wall clock. Do not pass `Date.now()` as the query param; use
-`since` / `until`. Default list window is the last 24 hours UTC; get-by-id
-defaults to the last 30 days so an older conversation is still found.
+Example: `1789012800000` is `2026-09-10T04:00:00.000Z`. Those values are
+UTC milliseconds — not seconds, and not a local wall clock. Do not pass
+`Date.now()` as the query param; use `since` / `until`. Default list
+window is the last 24 hours UTC; get-by-id defaults to the last 30 days
+so an older conversation is still found.
 
 ## Eventual consistency (~15 minute lag)
 
@@ -105,4 +104,4 @@ redaction as the rest of the SDK.
 |---|---|
 | `client.governance.listAiConversations` / `getAiConversation` | Hand-roll `intervalStartTime` epochs |
 | Reporter host (`/ibreports/web/…`) | Gateway `/json/…` or cloud `/ibcloud/web/…` |
-| `client.raw("reporter", …)` for the legacy query | Invent `GET /aiConversations` (not shipped)
+| `client.raw("reporter", …)` for the existing query | Invent `GET /aiConversations` |

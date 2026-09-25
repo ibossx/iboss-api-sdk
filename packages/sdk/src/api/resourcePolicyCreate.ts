@@ -1,5 +1,5 @@
 /**
- * One-shot Resource Policy create + verify (DEVELOP-34926).
+ * One-shot Resource Policy create + verify.
  *
  * Agent-facing surface (equivalent of POST …/resourcePolicies):
  *
@@ -14,9 +14,9 @@
  * re-GET and throw if destinations or settings did not stick.
  *
  * Composes the same concepts as the sibling purpose-named surfaces:
- *   destinations — DestinationSpec (DEVELOP-34925 put/getResourcePolicyDestinations)
- *   settings     — sparse ResourcePolicySettingsPatch (DEVELOP-34924
- *                  get/patchResourcePolicySettings)
+ *   destinations — DestinationSpec (put/getResourcePolicyDestinations)
+ *   settings     — sparse ResourcePolicySettingsPatch
+ *                  (get/patchResourcePolicySettings)
  *
  * `createLayer` is unchanged and still returns ids only.
  */
@@ -36,12 +36,12 @@ import {
   isGeneratedSettingsFamilyKey,
 } from "./policyFields.js";
 
-/** Today's gateway settings path. There is no distinct resourcePolicies POST yet. */
+/** Gateway settings path used by create: `/json/controls/policyLayers/settings`. */
 export const RESOURCE_POLICY_SETTINGS_WIRE_PATH = "/json/controls/policyLayers/settings";
 
 /**
- * Sparse settings fields — same idea as `patchResourcePolicySettings`
- * (DEVELOP-34924). Agents send only the fields they care about; the SDK
+ * Sparse settings fields — same idea as `patchResourcePolicySettings`.
+ * Agents send only the fields they care about; the SDK
  * fills families + `dlpPolicyMethod: 2`. Do not put `categories` /
  * `categoriesSelectedType` here — use `destinations`.
  */
@@ -63,9 +63,9 @@ export interface ResourcePolicySettingsPatch {
 
 export interface CreateResourcePolicyParams {
   name: string;
-  /** Typed destinations (DEVELOP-34925). Encoded to bit 110 + type 0 for AI Services. */
+  /** Typed destinations. Encoded to bit 110 + type 0 for AI Services. */
   destinations?: DestinationSpec;
-  /** Sparse settings (DEVELOP-34924). Merged over create defaults. */
+  /** Sparse settings. Merged over create defaults. */
   settings?: ResourcePolicySettingsPatch;
   /**
    * Defaults to `"categories"` so destinations are expressable. Pass

@@ -17,7 +17,7 @@ import {
 } from "../../src/api/destinations.js";
 import { emptyCategoriesBitmap } from "../../src/api/policies.js";
 
-describe("categories bitmap (DEVELOP-34925 / 34916)", () => {
+describe("categories bitmap", () => {
   it("encodes Selected Destinations → AI Services as bit 110 + type 0", () => {
     const encoded = encodeDestinationBits({
       mode: "selectedWebCategories",
@@ -77,7 +77,7 @@ describe("categories bitmap (DEVELOP-34925 / 34916)", () => {
 
     expect(() =>
       assertCategoriesBitmapExpressable({
-        customCategoryId: 14800,
+        customCategoryId: 1001,
         customType: 1,
         categories: bitmap,
         categoriesSelectedType: 0,

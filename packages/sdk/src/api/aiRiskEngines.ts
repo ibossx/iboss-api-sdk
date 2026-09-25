@@ -1,5 +1,5 @@
 /**
- * aiRiskEngines validation (DEVELOP-34913 / G).
+ * aiRiskEngines validation.
  *
  * Settings wire form is a free-form string (observed: "chatgpt"). Public
  * write input is `"all" | string[]`. The SDK encodes that to the platform

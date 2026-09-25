@@ -1,7 +1,7 @@
 /**
- * AI Security Governance conversation helpers (DEVELOP-34930 / 34915 leftover).
+ * AI Security Governance conversation helpers.
  *
- * Purpose-named list/get over today's reporter wire:
+ * Purpose-named list/get over the reporter wire:
  *   GET /ibreports/web/aiSecurityGovernance/conversations
  *   GET /ibreports/web/aiSecurityGovernance/conversations/{id}
  *
@@ -12,12 +12,12 @@
  *
  * Plain `since` / `until` on the reporter query (ISO or milliseconds) is a
  * **400**. The interval form (`intervalStartTime` / `intervalEndTime` /
- * `filterByIntervalTime`) is **200**. Confirmed 2026-09-22. This module
+ * `filterByIntervalTime`) is **200**. This module
  * rewrites agent `since` / `until` and never sends those names. Interval
  * fields already in wire form are passed through unchanged.
  */
 
-/** Observed reporter list/detail path (do not invent a sibling HTTP route). */
+/** Reporter list/detail path. Use `listAiConversations` / `getAiConversation`. */
 export const AI_GOVERNANCE_CONVERSATIONS_PATH =
   "/ibreports/web/aiSecurityGovernance/conversations";
 

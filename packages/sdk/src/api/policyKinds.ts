@@ -1,5 +1,5 @@
 /**
- * Purpose-named policy kinds for agent list/query (DEVELOP-34927 / 34915).
+ * Purpose-named policy kinds for agent list/query.
  *
  * Agents must not guess `typeFilter=9` or choose between
  * `resourcePolicies` and `policyLayers/all`. This module is the documented
@@ -21,10 +21,7 @@ export type PolicyKind = (typeof POLICY_KINDS)[number];
 /** Optional list that classifies every row instead of filtering to one kind. */
 export type PolicyListKind = PolicyKind | "all";
 
-/**
- * Alias used by the optional HTTP sibling
- * `GET /json/controls/resourcePolicies?kind=internet`.
- */
+/** `internet` is an alias of `resource` (same list as `kind: "resource"`). */
 export const POLICY_KIND_ALIASES = {
   internet: "resource",
 } as const;
@@ -47,7 +44,7 @@ export const POLICY_CUSTOM_TYPE = {
   allowlist: 1,
   /** Categories-type; AI Security destinations use this (or 13). */
   categories: 3,
-  /** Alternate GET value for categories (Bug Replicator traces). */
+  /** Alternate GET value for categories. */
   categoriesAlt: 13,
   dlp: 9,
   connector: 12,

@@ -9,7 +9,6 @@ gotchas.
 |---|---|---|---|
 | [agent-quickstart.md](agent-quickstart.md) | (agent cookbook) | purpose-named surfaces | Copy-paste: settings patch `auto`, destinations `AI_SERVICES`, create+verify, `listPolicies` kinds, governance conversations |
 | [agent-footguns.md](agent-footguns.md) | (agent negative paths) | — | Wipe-on-omit POST, allowlist+categories drop, POST 200 / `saveIgnoredEntries`, `typeFilter=9`, governance epochs / ~15m lag |
-| [merge-order.md](merge-order.md) | (evening-stack review) | — | Gateway 34921 (#6340) then 34923 (#6344); SDK recon #8; clash winners; live QA hold on test-gateway-14800 |
 | [authentication.md](authentication.md) | (API keys: admin console key management) | — | API keys, connect()/discovery, rotation, password login |
 | [accounts-and-clusters.md](accounts-and-clusters.md) | Account settings, Cloud Health | `client.account` | accounts, key expiry/rotation, preferences, clusters/nodes |
 | [resource-policies.md](resource-policies.md) | Secure Access Policies → SaaS & Internet Access Policies | `client.policies` | Resource Policies: internet/SaaS access control, CASB, resource association; sparse GET/PATCH settings; typed destinations; one-shot `createResourcePolicy` |
@@ -28,9 +27,6 @@ gotchas.
 | [reporting-and-logs.md](reporting-and-logs.md) | Reporting | `client.reporting` | drill-down reports, URL logs, incident settings |
 | [ai-governance-conversations.md](ai-governance-conversations.md) | AI Security Dashboard → Conversations | `client.governance` | AI Governance conversation list/get (reporter; ~15m lag; redaction) |
 | [errors-and-gotchas.md](errors-and-gotchas.md) | — | — | status-code semantics, XSRF, host routing |
-
-Cross-cutting design notes (epic findings):
-[Agent-friendly APIs](../agent-apis.md) — DEVELOP-34912 ground-truth shapes, footguns, and proposed wrappers (from draft #1).
 
 ## The four policy types (they look similar on the wire)
 
@@ -75,13 +71,12 @@ between `resourcePolicies` and `policyLayers/all`. See
 
 Start with [agent-quickstart.md](agent-quickstart.md) (copy-paste
 TypeScript). Negative paths: [agent-footguns.md](agent-footguns.md).
-Evening-stack merge/review order: [merge-order.md](merge-order.md).
 Detail is in
-[resource-policies.md](resource-policies.md#agent-helpers-develop-34914--34916)
+[resource-policies.md](resource-policies.md#agent-helpers)
 for `fromEnv` / `getResourcePolicySettings` / `patchResourcePolicySettings`
-(`transport: "auto"` = native PATCH → 404/405 get-merge-full-POST; POST
-`?merge=1` is opt-in only) / `putResourcePolicyDestinations` /
-`createResourcePolicy` (verified re-GET). These are additive SDK wrappers
-over today's `GET/POST /json/controls/policyLayers/settings`
-(DEVELOP-34913 / 34914 / 34916 / 34921 / 34924 / 34925 / 34926). Existing
+(`transport: "auto"` = native PATCH when the node supports it, otherwise
+GET → merge → full POST; POST `?merge=1` is opt-in only) /
+`putResourcePolicyDestinations` / `createResourcePolicy` (verified re-GET).
+These are SDK wrappers over
+`GET` / `POST` / `PATCH` `/json/controls/policyLayers/settings`. Existing
 methods and wire paths are unchanged.

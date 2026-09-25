@@ -14,7 +14,7 @@ function makeClient(state = createMockState()) {
   });
 }
 
-describe("resource-policy get-merge-post fallback (DEVELOP-34914)", () => {
+describe("resource-policy get-merge-post fallback", () => {
   it("get-merge-post preserves catN families when the agent sends only aiRiskEnabled", async () => {
     const state = createMockState();
     const client = makeClient(state);
@@ -114,7 +114,7 @@ describe("resource-policy get-merge-post fallback (DEVELOP-34914)", () => {
   });
 });
 
-describe("typed destinations (DEVELOP-34916 / 34925)", () => {
+describe("typed destinations", () => {
   it("ensureAiSecurityDestination sets bit 110 and categoriesSelectedType 0", async () => {
     const state = createMockState();
     const client = makeClient(state);
@@ -176,7 +176,7 @@ describe("typed destinations (DEVELOP-34916 / 34925)", () => {
   });
 });
 
-describe("raw() tier inference + host routing (DEVELOP-34913)", () => {
+describe("raw() tier inference + host routing", () => {
   it("sends inferred /json paths to the gateway and /ibreports to the reporter", async () => {
     const state = createMockState();
     const client = makeClient(state);

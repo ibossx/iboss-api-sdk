@@ -1,19 +1,18 @@
 /**
- * Purpose-named sparse GET/PATCH for Resource Policy settings
- * (DEVELOP-34924).
+ * Purpose-named sparse GET/PATCH for Resource Policy settings.
  *
  * Agent-facing surface (equivalent of GET/PATCH
  * `…/resourcePolicies/{id}/settings`):
- *   GET  /json/controls/policyLayers/settings?customCategoryId=
- *   PATCH /json/controls/policyLayers/settings?customCategoryId=   (DEVELOP-34921)
- *   POST  /json/controls/policyLayers/settings?merge=1             (same)
+ *   GET   /json/controls/policyLayers/settings?customCategoryId=
+ *   PATCH /json/controls/policyLayers/settings?customCategoryId=
+ *   POST  /json/controls/policyLayers/settings?merge=1
  *
  * Agents send only changed fields. Omitted keys stay unchanged — callers
  * never invent catN / prioN / bypassSslMitmN families or the 400-char
- * bitmap. Native Gateway merge (DEVELOP-34921, live on lab gateways) is
- * preferred. Auto mode does **not** send a sparse POST `?merge=1` on
- * unknown gateways (an old node would treat it as wipe-on-omit). If PATCH
- * is 404/405, fall back to the DEVELOP-34914 get→deep-merge→full POST.
+ * bitmap. Native PATCH is used when the node supports it. Auto mode does
+ * **not** send a sparse POST `?merge=1`: older nodes that ignore
+ * `?merge=1` will wipe on omit. If PATCH is 404/405, fall back to
+ * GET → deep-merge → full POST.
  *
  * `updateLayerSettings(fullBlob)` remains the full-replace API.
  */
@@ -24,16 +23,16 @@ import {
   isGeneratedSettingsFamilyKey,
 } from "./policyFields.js";
 
-/** Today's gateway wire path. There is no distinct resourcePolicies/{id}/settings route yet. */
+/** Settings wire path: `/json/controls/policyLayers/settings`. */
 export const RESOURCE_POLICY_SETTINGS_WIRE_PATH = "/json/controls/policyLayers/settings";
 
 /**
  * How a sparse update is sent.
  *
- * - `auto` — PATCH (34921); on 404/405, get→merge→full POST (34914)
+ * - `auto` — native PATCH when the node supports it; on 404/405, get→merge→full POST
  * - `native-patch` — HTTP PATCH only
- * - `merge-post` — POST `?merge=1` (opt-in; unsafe on pre-34921 gateways)
- * - `get-merge-post` — GET, deep-merge, full POST (34914 fallback)
+ * - `merge-post` — POST `?merge=1` (opt-in; older nodes that ignore merge wipe on omit)
+ * - `get-merge-post` — GET, deep-merge, full POST (fallback)
  */
 export type ResourcePolicySettingsTransport =
   | "auto"
@@ -67,7 +66,7 @@ export function mergePatch(target: unknown, patch: unknown): unknown {
   return out;
 }
 
-/** Shallow/deep merge used by the 34914 fallback. `undefined` is skipped; `null` is kept. */
+/** Shallow/deep merge used by the get-merge-post fallback. `undefined` is skipped; `null` is kept. */
 export function deepMerge(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,
@@ -150,8 +149,8 @@ function isResourcePolicy(settings: Record<string, unknown>): boolean {
 }
 
 /**
- * DEVELOP-34914 fallback body: GET blob + patch, families filled so a
- * full-replace POST cannot Gateway-default omitted catN / prioN / bypassSslMitmN.
+ * Fallback body: GET blob + patch, families filled so a full-replace POST
+ * cannot default omitted catN / prioN / bypassSslMitmN.
  */
 export function mergeResourcePolicySettingsForFallback(
   current: Record<string, unknown>,

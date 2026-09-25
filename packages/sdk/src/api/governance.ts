@@ -1,7 +1,7 @@
 /**
  * AI Security Governance (reporter tier).
  *
- * Purpose-named conversation list/get (DEVELOP-34930). Wraps today's
+ * Purpose-named conversation list/get. Wraps the
  * reporter search — agents must not hand-roll the opaque query string.
  *
  * ```ts

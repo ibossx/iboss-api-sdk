@@ -33,7 +33,7 @@ function currentSettings(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
-describe("mergeResourcePolicySettings (DEVELOP-34914)", () => {
+describe("mergeResourcePolicySettings", () => {
   it("omit-safe merge: omitted patch fields keep prior GET values, including full families", () => {
     const current = currentSettings({
       showPACUrl: 1,
@@ -121,7 +121,7 @@ describe("mergeResourcePolicySettings (DEVELOP-34914)", () => {
     expect(next.aiRiskEnabled).toBe(1);
   });
 
-  it("still round-trips families when advanced is set (no native Gateway PATCH)", () => {
+  it("still round-trips families when advanced is set", () => {
     const current = currentSettings({ cat7: 9 });
     const { next } = mergeResourcePolicySettings(current, { aiRiskEnabled: 1, advanced: true });
     expect(next.aiRiskEnabled).toBe(1);

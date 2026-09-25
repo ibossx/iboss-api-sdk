@@ -15,13 +15,13 @@
  *   1. PUT  /json/controls/policyLayers          → returns customCategoryId + customCategoryNumber
  *   2. POST /json/controls/policyLayers/settings → applies the full settings payload
  * createLayer() wraps both steps and still returns ids only. Agents creating
- * Resource Policies should use createResourcePolicy() (DEVELOP-34926): same
- * two-step internally, then re-GET so the response is effective settings.
+ * Resource Policies should use createResourcePolicy(): same two-step
+ * internally, then re-GET so the response is effective settings.
  *
- * Sparse settings updates (DEVELOP-34924): getResourcePolicySettings /
- * patchResourcePolicySettings prefer native Gateway PATCH (34921) and fall
- * back to get→merge→full POST (34914). Do not POST a partial blob via
- * updateLayerSettings — omitted families are Gateway-defaulted.
+ * Sparse settings updates: getResourcePolicySettings /
+ * patchResourcePolicySettings use native PATCH when the node supports it
+ * and fall back to get→merge→full POST. Do not POST a partial blob via
+ * updateLayerSettings — omitted families are defaulted.
  *
  * Resource Policies MUST include dlpPolicyMethod: 2 in every settings payload
  * (createLayer / createResourcePolicy add it when isZeroTrustResourcePolicy: 1).
@@ -121,7 +121,7 @@ export class PoliciesApi extends SubClient {
   /**
    * Cached after the first auto PATCH attempt. `false` means this gateway
    * rejected PATCH (404/405) so later auto updates skip straight to the
-   * 34914 get→merge→POST fallback.
+   * get→merge→POST fallback.
    */
   private nativeSettingsPatchSupported?: boolean;
 
@@ -173,7 +173,7 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Purpose-named list (DEVELOP-34927 / 34915). Prefer this over guessing
+   * Purpose-named list. Prefer this over guessing
    * `typeFilter=9` or choosing between `listResourcePolicies` and
    * `listLayers`. Legacy list methods are unchanged.
    *
@@ -211,7 +211,7 @@ export class PoliciesApi extends SubClient {
     return toPolicyList(kind, enriched);
   }
 
-  /** DEVELOP-34915 helper — composes `listPolicies({ kind: "dlp" })`. */
+  /** Composes `listPolicies({ kind: "dlp" })`. */
   async listDlpPolicies(opts?: {
     inspectSettings?: boolean;
     signal?: AbortSignal;
@@ -219,7 +219,7 @@ export class PoliciesApi extends SubClient {
     return this.listPolicies({ kind: "dlp", ...opts });
   }
 
-  /** DEVELOP-34915 helper — composes `listPolicies({ kind: "aiSecurity" })`. */
+  /** Composes `listPolicies({ kind: "aiSecurity" })`. */
   async listAiSecurityPolicies(opts?: {
     inspectSettings?: boolean;
     signal?: AbortSignal;
@@ -417,7 +417,7 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * One-shot Resource Policy create + re-GET verify (DEVELOP-34926).
+   * One-shot Resource Policy create + re-GET verify.
    *
    * Agent-facing equivalent of `POST …/resourcePolicies`:
    *
@@ -435,8 +435,8 @@ export class PoliciesApi extends SubClient {
    * settings did not persist. Do not trust POST success or empty
    * `saveIgnoredEntries`.
    *
-   * Composes the sibling purpose-named surfaces: `destinations` is the
-   * DEVELOP-34925 body; `settings` is the DEVELOP-34924 sparse patch.
+   * Composes the purpose-named surfaces: `destinations` is a typed
+   * destination body; `settings` is the sparse settings patch.
    * `aiRiskEngines` is `"all"` or a slug list and is encoded to the
    * platform string before POST. `createLayer` is unchanged and still
    * returns ids only.
@@ -616,9 +616,9 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Purpose-named Resource Policy settings GET (DEVELOP-34924).
+   * Purpose-named Resource Policy settings GET.
    *
-   * Equivalent of `GET …/resourcePolicies/{id}/settings`. Wire today is
+   * Equivalent of `GET …/resourcePolicies/{id}/settings`. Wire path is
    * `GET /json/controls/policyLayers/settings?customCategoryId=`.
    *
    * `view: "summary"` (default) hides catN / prioN / bypassSslMitmN and
@@ -639,7 +639,7 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Purpose-named omit-safe Resource Policy settings PATCH (DEVELOP-34924).
+   * Purpose-named omit-safe Resource Policy settings PATCH.
    *
    * Equivalent of `PATCH …/resourcePolicies/{id}/settings`. Agents send
    * only changed fields (`{ aiRiskEnabled: 1 }`); omitted keys — including
@@ -648,16 +648,16 @@ export class PoliciesApi extends SubClient {
    * platform string before the write.
    *
    * Transport (`opts.transport`, default `auto`):
-   * 1. Native `PATCH` on the existing settings path (DEVELOP-34921).
-   * 2. If PATCH is 404/405, DEVELOP-34914 get→deep-merge→**full** POST
-   *    (families filled so Gateway POST cannot default omitted fields).
+   * 1. Native `PATCH` on the existing settings path when the node supports it.
+   * 2. If PATCH is 404/405, GET → deep-merge → **full** POST
+   *    (families filled so a plain POST cannot default omitted fields).
    *
    * POST `?merge=1` is available as `transport: "merge-post"` but is **not**
-   * used by `auto`: a pre-34921 gateway would ignore `merge` and wipe.
-   * `updateLayerSettings(fullBlob)` stays the caller-supplied full replace.
+   * used by `auto`. Older nodes that ignore `?merge=1` will wipe on omit —
+   * never send merge unless you know the node supports it; prefer transport
+   * auto. `updateLayerSettings(fullBlob)` stays the caller-supplied full replace.
    *
-   * Re-GETs after write. TOCTOU on the get-merge-post fallback is accepted
-   * for agent v1 (same as DEVELOP-34914).
+   * Re-GETs after write. TOCTOU on the get-merge-post fallback is accepted.
    */
   async patchResourcePolicySettings(
     customCategoryId: number,
@@ -734,7 +734,7 @@ export class PoliciesApi extends SubClient {
     }
   }
 
-  /** DEVELOP-34914: GET → deep-merge → full POST (never a sparse replace). */
+  /** GET → deep-merge → full POST (never a sparse replace). */
   private async patchViaGetMergePost(
     customCategoryId: number,
     patch: ResourcePolicySettingsPatch,
@@ -757,11 +757,11 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Read destinations as a typed list (DEVELOP-34925). Agents never see the
+   * Read destinations as a typed list. Agents never see the
    * 400-char `categories` bitmap or inverted `categoriesSelectedType`.
    *
    * Purpose-named equivalent of `GET …/resourcePolicies/{id}/destinations`.
-   * Wire today is `GET /json/controls/policyLayers/settings`.
+   * Wire path is `GET /json/controls/policyLayers/settings`.
    */
   async getResourcePolicyDestinations(
     customCategoryId: number,
@@ -777,7 +777,7 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * Purpose-named typed destinations write (DEVELOP-34925):
+   * Purpose-named typed destinations write:
    *
    * ```
    * PUT …/resourcePolicies/{id}/destinations
@@ -795,7 +795,7 @@ export class PoliciesApi extends SubClient {
    * wire reject; this throw happens before POST. Pass `onWrongType: "warn"`
    * to skip the write and leave the layer unchanged.
    *
-   * Implementation (no Gateway destinations sibling required):
+   * Wire steps:
    * 1. GET `/json/controls/policyLayers/settings?customCategoryId=`
    * 2. Encode destinations onto the full GET blob (families preserved)
    * 3. POST the complete object to the same settings path
@@ -818,7 +818,7 @@ export class PoliciesApi extends SubClient {
     if (prepared.skipped) return decodeDestinations(current);
 
     // Prior family values win; fill only gaps so Gateway POST cannot default
-    // omitted catN / prioN / bypassSslMitmN (DEVELOP-34251 / 32482 class).
+    // omitted catN / prioN / bypassSslMitmN.
     const body = {
       ...generateCategoryFields(),
       ...generatePriorityFields(),
@@ -852,7 +852,7 @@ export class PoliciesApi extends SubClient {
   }
 
   /**
-   * DEVELOP-34916 helper name. Thin alias of `putResourcePolicyDestinations`.
+   * Thin alias of `putResourcePolicyDestinations`.
    */
   async setDestination(
     customCategoryId: number,

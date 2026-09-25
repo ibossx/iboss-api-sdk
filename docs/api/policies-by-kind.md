@@ -1,7 +1,6 @@
 # Policies by kind (agent list/query)
 
 **SDK:** `client.policies.listPolicies({ kind })` ·
-**Tickets:** DEVELOP-34927, DEVELOP-34915 ·
 **Non-breaking:** `listLayers` and `listResourcePolicies` are unchanged.
 
 Agents must not guess `typeFilter=9` (DLP) or choose between
@@ -18,8 +17,8 @@ const ai = await client.policies.listPolicies({ kind: "aiSecurity" });
 `listDlpPolicies()` and `listAiSecurityPolicies()` compose
 `listPolicies({ kind })` — same envelope, no second implementation.
 
-There is no Gateway `GET /policies?kind=` yet. The SDK wraps today's
-paths (optional sibling later: `GET /json/controls/resourcePolicies?kind=`).
+The SDK maps each `kind` onto the list paths below. Callers use
+`listPolicies({ kind })`; they do not send `GET /policies?kind=`.
 
 ## Kind enum → wire filter
 

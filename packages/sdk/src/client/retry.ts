@@ -26,7 +26,7 @@ export function backoffDelay(attempt: number, opts: RetryOptions, random = Math.
 }
 
 export function isIdempotent(method: HttpMethod): boolean {
-  // PATCH of policyLayers/settings is RFC 7396 merge (DEVELOP-34921) — repeating
+  // PATCH of policyLayers/settings is RFC 7396 merge — repeating
   // the same sparse body is safe.
   return method === "GET" || method === "PUT" || method === "DELETE" || method === "PATCH";
 }

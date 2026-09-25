@@ -28,7 +28,7 @@ function makeClient(state = createMockState()) {
   return { client, state, warnings };
 }
 
-describe("PUT resourcePolicies/{id}/destinations (DEVELOP-34925)", () => {
+describe("PUT resourcePolicies/{id}/destinations", () => {
   it("sets AI Services without the agent inventing a bitmap or inverted type", async () => {
     const { client, state } = makeClient();
     const layer = await client.policies.createLayer({

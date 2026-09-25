@@ -1,14 +1,15 @@
 /**
- * Agent-friendly Resource Policy helpers (DEVELOP-34913 / 34914 / 34916).
+ * Agent-friendly Resource Policy helpers.
  *
  *   npx tsx examples/07-ai-security-destination.ts
  *
  * Uses IbossClient.fromEnv() / fromProfile() so the key never enters the
  * script. Typed destinations hide the 400-char categories bitmap (bit 110 =
- * AI Services, categoriesSelectedType 0 = Selected Destinations). Patch
- * UPDATE is SDK-only GET → deep-merge → full POST of the existing settings
- * path (no native Gateway PATCH). Omitted fields keep prior values; the
- * SDK re-GETs and refuses to trust POST success alone.
+ * AI Services, categoriesSelectedType 0 = Selected Destinations). Sparse
+ * UPDATE uses native PATCH when the node supports it, otherwise GET →
+ * deep-merge → full POST of the existing settings path. Omitted fields
+ * keep prior values; the SDK re-GETs and refuses to trust POST success
+ * alone.
  */
 import { IbossClient } from "@iboss/sdk";
 

@@ -46,14 +46,15 @@ no reporting cluster provisioned).
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),
   `prio0..prio110` (=0), `bypassSslMitm0..bypassSslMitm110` (=0), and a
   400-char `categories` bitmap. Helpers: `generateCategoryFields()` etc.
-  Gateway POST **defaults omitted fields** (DEVELOP-34251 / DEVELOP-32482) —
+  A plain gateway POST **defaults omitted fields** —
   never POST a partial settings blob via `updateLayerSettings`.
-  `patchResourcePolicySettings` (`transport: "auto"`) prefers native
-  Gateway PATCH (DEVELOP-34921); on 404/405 it falls back to
-  get→deep-merge→**full** POST (DEVELOP-34914). POST `?merge=1` is
-  `transport: "merge-post"` opt-in only — `auto` must not send it on a
-  pre-34921 gateway (the query would be ignored and wipe). TOCTOU on the
-  GET→POST fallback is accepted for agent v1.
+  `patchResourcePolicySettings` (`transport: "auto"`) uses native PATCH
+  when the node supports it; on 404/405 it falls back to
+  get→deep-merge→**full** POST. POST `?merge=1`
+  is `transport: "merge-post"` opt-in only. Older nodes that ignore
+  `?merge=1` will wipe on omit — never send merge unless you know the
+  node supports it; prefer transport auto. TOCTOU on the GET→POST
+  fallback is accepted.
 - **AI Services destination** is bit **110** of the bitmap plus
   `categoriesSelectedType: 0` (Selected Destinations — inverted enum). Use
   `putResourcePolicyDestinations` / `ensureAiSecurityDestination` /

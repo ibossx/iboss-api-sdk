@@ -2,10 +2,9 @@
  * Generated settings-field families that the platform expects on every
  * **full-replace** policy-layer / resource-policy settings POST.
  *
- * Plain POST `/json/controls/policyLayers/settings` applies Gateway defaults
- * for omitted fields (DEVELOP-34251 / DEVELOP-32482). Sparse native PATCH
- * and POST `?merge=1` (DEVELOP-34921) do **not** need these families —
- * only the DEVELOP-34914 get→merge→full-POST fallback does.
+ * Plain POST `/json/controls/policyLayers/settings` applies gateway defaults
+ * for omitted fields. Sparse native PATCH and POST `?merge=1` do **not**
+ * need these families — only the get→merge→full-POST fallback does.
  */
 
 /** Inclusive upper bound of catN / prioN / bypassSslMitmN (111 members). */

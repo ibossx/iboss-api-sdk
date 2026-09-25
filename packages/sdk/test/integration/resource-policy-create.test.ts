@@ -14,7 +14,7 @@ function makeClient(state = createMockState()) {
   });
 }
 
-describe("createResourcePolicy (DEVELOP-34926)", () => {
+describe("createResourcePolicy", () => {
   it("returns effective re-GET settings, not just ids / POST 200", async () => {
     const state = createMockState();
     const client = makeClient(state);
