@@ -12,6 +12,7 @@
  *  5. GET /ibreports/web/users/me            — prime reporter-host cookies
  */
 import { IbossAuthError, IbossError } from "./errors.js";
+import { applyHostOverrides, type HostOverrides } from "./hosts.js";
 import type { Logger } from "./logger.js";
 import type { RequestLayer } from "./request.js";
 import { parseIbossExpiry, type AccountInfo, type SessionState } from "./session.js";
@@ -43,6 +44,8 @@ interface RawCluster {
 export interface DiscoverOptions {
   /** Pin a specific account; defaults to the primary account. */
   accountSettingsId?: string;
+  /** Win over cluster discovery (IBOSS_GATEWAY_HOST / constructor `hosts`). */
+  hostOverrides?: HostOverrides;
   logger: Logger;
 }
 
@@ -119,6 +122,7 @@ export async function discover(layer: RequestLayer, opts: DiscoverOptions): Prom
       }
     }
   }
+  if (opts.hostOverrides) applyHostOverrides(layer.hosts, opts.hostOverrides);
   logger.debug("Discovered hosts", { hosts: { ...layer.hosts } });
 
   // Step 5 — prime reporter-host cookies so mutating reporter calls have XSRF state.

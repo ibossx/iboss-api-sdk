@@ -65,7 +65,13 @@ cp .env.example .env
 # then UNCOMMENT and fill BOTH lines in .env:
 #   IBOSS_CLOUD_DOMAIN=api.ibosscloud.com
 #   IBOSS_API_KEY=<your key>
+# optional node overrides (normally discovered at connect()):
+#   IBOSS_GATEWAY_HOST=gateway.node.example.invalid
+#   IBOSS_REPORTER_HOST=reporter.node.example.invalid
 ```
+
+`IbossClient.fromEnv()` reads those variables (and a local `.env`).
+`IbossClient.fromProfile()` uses the same files as the CLI.
 
 When both are set they take precedence over saved profiles (so CI can inject
 credentials), and `auth test` tells you when that shadowing is happening.
@@ -119,10 +125,7 @@ As a library:
 ```ts
 import { IbossClient } from "@iboss/sdk";
 
-const client = new IbossClient({
-  domain: process.env.IBOSS_CLOUD_DOMAIN!,
-  credentials: { apiKey: process.env.IBOSS_API_KEY! },
-});
+const client = IbossClient.fromEnv(); // or new IbossClient({ domain, credentials: { apiKey } })
 await client.connect();
 console.log(await client.groups.listFilteringGroups());
 ```

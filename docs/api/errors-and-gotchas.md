@@ -10,6 +10,8 @@
 | 404 | `IbossApiError` | Wrong path or wrong **host tier** | Confirm the tier: `/json/...`→gateway, `/ibcloud/web/...`→cloud, `/ibreports/...`→reporter |
 | 422 | `IbossSubscriptionError` | Account lacks the module's subscription, or payload shape invalid | Check `session.account.subscriptionFlags`; for DLP/ZTNA treat as an expected skip |
 | 5xx / network | retried, then `IbossApiError` / `IbossNetworkError` | Transient platform/network issue | The SDK already retried (idempotent methods) |
+| n/a | `IbossVerifyError` | Settings POST succeeded but re-GET did not show the intended fields (bitmap / `categoriesSelectedType` / `dlpPolicyMethod` / `aiRisk*`) | Do not trust POST success or empty `saveIgnoredEntries`; fix the payload or recreate as categories-type |
+| n/a | `IbossPolicyTypeError` | Allowlist/blocklist + categories destinations | Bitmap would be silently dropped. Delete and recreate with `e_custom_category_type_categories` |
 
 All API errors carry `method`, `url`, `status`, and a truncated response
 `body` for diagnostics.
@@ -20,7 +22,7 @@ All API errors carry `method`, `url`, `status`, and a truncated response
 |---|---|---|
 | `/ibcloud/web/...` | cloud (config.domain) | accounts, groups, PAC zones, resources, preferences |
 | `/json/...` | gateway node (discovered) | policy layers, firewall, DLP, SSL, ZTNA, users/devices |
-| `/ibreports/web/...` | reporter node (discovered) | reports, URL logs, incidents |
+| `/ibreports/web/...` | reporter node (discovered) | reports, URL logs, incidents, AI Governance conversations |
 | `/ibossauth/web/...` | accounts host | login/token APIs |
 
 `IbossHostUnavailableError` means the account has no node of that type (e.g.
@@ -31,17 +33,41 @@ no reporting cluster provisioned).
 - **Four policy types share one wire shape.** Resource Policies, Private
   Access routed policies, Policy Layers, and Connector Policies are all
   created through `/json/controls/policyLayers` — see the type table in
-  [README.md](README.md) for the distinguishing fields.
+  [README.md](README.md) for the distinguishing fields. List them with
+  `listPolicies({ kind })` — do not guess `typeFilter=9`.
 - **Two-step policy creation.** Creating any of them is
   `PUT /json/controls/policyLayers` (structure) then
   `POST /json/controls/policyLayers/settings` (full settings). A policy
   created without the settings step is incomplete. Use
-  `client.policies.createLayer()` which does both.
+  `client.policies.createLayer()` (returns ids) or
+  `createResourcePolicy()` (re-GET verified settings).
 - **`dlpPolicyMethod: 2` is mandatory** in every *Resource Policy* settings
   payload. `createLayer({ isZeroTrustResourcePolicy: 1 })` adds it.
 - **Settings payloads carry generated field families**: `cat0..cat110` (=3),
   `prio0..prio110` (=0), `bypassSslMitm0..bypassSslMitm110` (=0), and a
   400-char `categories` bitmap. Helpers: `generateCategoryFields()` etc.
+  A plain gateway POST **defaults omitted fields** —
+  never POST a partial settings blob via `updateLayerSettings`.
+  `patchResourcePolicySettings` (`transport: "auto"`) uses native PATCH
+  when the node supports it; on 404/405 it falls back to
+  get→deep-merge→**full** POST. POST `?merge=1`
+  is `transport: "merge-post"` opt-in only. Older nodes that ignore
+  `?merge=1` will wipe on omit — never send merge unless you know the
+  node supports it; prefer transport auto. TOCTOU on the GET→POST
+  fallback is accepted.
+- **AI Services destination** is bit **110** of the bitmap plus
+  `categoriesSelectedType: 0` (Selected Destinations — inverted enum). Use
+  `putResourcePolicyDestinations` / `ensureAiSecurityDestination` /
+  `setDestination`. Allowlist recreate (`customType: 1`) silently drops
+  the bitmap — the SDK **rejects** (or `onWrongType: "warn"`) and never
+  silent-drops.
+- **AI Governance conversations** live on `client.governance`
+  (`listAiConversations` / `getAiConversation`). Intervals are UTC unix
+  ms; newly finished chats are often missing for ~15 minutes; `vendor`
+  and `textContains` are SDK-side filters; domains and leaked bodies are
+  redacted.
+- **Always re-GET after a settings POST.** Empty `saveIgnoredEntries` is not
+  proof the fields persisted.
 - **Routed peer creation returns no UUID.** After
   `PUT /json/network/mobileClients/peer`, re-list peers and match on
   `locationUuids`/name; propagation can take seconds. Use

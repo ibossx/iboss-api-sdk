@@ -38,8 +38,9 @@ Platform default policy group associations:
 | Android | `"9"` |
 
 List existing connector policies with
-`client.policies.listLayers({ isZeroTrustLayer: 0 })` and filter on
-`customType === 12`.
+`client.policies.listPolicies({ kind: "connector" })`
+(maps to `listLayers({ isZeroTrustLayer: 0 })` plus `customType === 12`).
+The legacy `listLayers` path is unchanged.
 
 ## Connector general settings (security keys)
 

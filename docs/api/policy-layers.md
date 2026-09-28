@@ -60,7 +60,10 @@ allowlist = `e_custom_category_type_allowlist`, categories =
 
 `listLayers` filters: `isZeroTrustLayer` −1 = all policy types (default),
 0 = overlay layers only, 1 = resource policies only; `typeFilter` −1 = all
-types.
+types (**9 = DLP**). Agents should use
+`client.policies.listPolicies({ kind: "layer" | "dlp" | "connector" })`
+instead of guessing those integers — see [policies-by-kind.md](policies-by-kind.md).
+`listLayers` itself is unchanged.
 
 ## Linking to default policy groups
 

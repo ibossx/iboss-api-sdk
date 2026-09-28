@@ -16,7 +16,22 @@ const client = new IbossClient({
   credentials: { apiKey: process.env.IBOSS_API_KEY! },
 });
 await client.connect();
+
+// Same headers, less boilerplate:
+const fromEnv = IbossClient.fromEnv();
+// IBOSS_API_KEY, IBOSS_CLOUD_DOMAIN, optional IBOSS_ACCOUNT_ID,
+// IBOSS_GATEWAY_HOST / IBOSS_GATEWAY_URL, IBOSS_REPORTER_HOST / IBOSS_REPORTER_URL
+
+const fromProfile = IbossClient.fromProfile(); // same files as the CLI
 ```
+
+Every request (gateway **and** reporter, GETs included) sends
+`Authorization: Token <key>` and `User-Agent: ibossAPI`. Omitting the UA is
+an observed 401/403 mode. Policy writes go to the **gateway** (`/json/...`);
+conversations go to the **reporter** (`/ibreports/...`). The same key on the
+**cloud** host often returns `access.denied` for those paths — use
+`client.raw("GET", "/json/...")` (tier inferred) or the 4-arg
+`raw(tier, method, path)` form.
 
 A 401 with an API key is terminal: the key is wrong, expired, revoked, or
 scoped to a different cloud domain (`IbossAuthError`).

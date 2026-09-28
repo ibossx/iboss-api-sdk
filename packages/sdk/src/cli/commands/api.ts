@@ -1,20 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import type { HttpMethod } from "../../client/errors.js";
-import type { HostTier } from "../../client/hosts.js";
+import { inferHostTier, isHostTier, type HostTier } from "../../client/hosts.js";
 import { clientFromProfile, resolveCliProfile, type GlobalCliOptions } from "../context.js";
 import { printJson } from "../render.js";
 
 const METHODS = new Set<HttpMethod>(["GET", "POST", "PUT", "DELETE", "PATCH"]);
-const TIERS = new Set<HostTier>(["cloud", "gateway", "reporter", "rbi", "accounts"]);
-
-/** Infer the host tier from the path prefix when --host is not given. */
-function inferTier(path: string): HostTier {
-  if (path.startsWith("/json/")) return "gateway";
-  if (path.startsWith("/ibreports/")) return "reporter";
-  if (path.startsWith("/ibossauth/")) return "accounts";
-  return "cloud";
-}
 
 export function registerApiCommand(program: Command): void {
   program
@@ -33,8 +24,8 @@ export function registerApiCommand(program: Command): void {
         const httpMethod = method.toUpperCase() as HttpMethod;
         if (!METHODS.has(httpMethod)) throw new Error(`Unsupported method "${method}"`);
 
-        const tier = (cmdOpts.host as HostTier) ?? inferTier(path);
-        if (!TIERS.has(tier)) throw new Error(`Unknown host tier "${cmdOpts.host}"`);
+        const tier = (cmdOpts.host as HostTier | undefined) ?? inferHostTier(path);
+        if (!isHostTier(tier)) throw new Error(`Unknown host tier "${cmdOpts.host}"`);
 
         let body: unknown;
         if (cmdOpts.body) {
