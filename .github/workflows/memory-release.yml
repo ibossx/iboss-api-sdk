@@ -1,0 +1,74 @@
+name: memory-release
+
+on:
+  push:
+    tags:
+      - "memory-v*"
+  # Dry run: builds and checksums the artifact without creating a tag or a GitHub Release.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label for the dry-run index
+        required: false
+        default: 0.0.0-dryrun
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment approve each public memory release.
+    environment: ${{ github.event_name == 'push' && 'memory-release' || '' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Tag must be on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Checks
+        env:
+          MEMORY_DENYLIST: ${{ secrets.MEMORY_DENYLIST }}
+        run: |
+          npm run check:secrets
+          npm run test:memory
+      - name: Build index and tarball
+        env:
+          MEMORY_DENYLIST: ${{ secrets.MEMORY_DENYLIST }}
+          DRY_RUN_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#memory-v}"
+          else
+            version="${DRY_RUN_VERSION:-0.0.0-dryrun}"
+          fi
+          out="$RUNNER_TEMP/release"
+          mkdir -p "$out"
+          node scripts/memory.mjs index "$version" "$out/index.json"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@0" \
+            --exclude="memory/_templates" -czf "$out/iboss-memory-public-$version.tar.gz" memory
+          (cd "$out" && sha256sum index.json "iboss-memory-public-$version.tar.gz" > SHA256SUMS)
+          cat "$out/SHA256SUMS"
+      - name: Keep dry-run artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-release-dry-run
+          path: ${{ runner.temp }}/release
+          retention-days: 7
+      - name: Publish release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          out="$RUNNER_TEMP/release"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Public API memory $GITHUB_REF_NAME" \
+            --notes "Reviewed public memory notes for customer-facing assistants. Verify downloads against SHA256SUMS." \
+            "$out/index.json" "$out"/iboss-memory-public-*.tar.gz "$out/SHA256SUMS"

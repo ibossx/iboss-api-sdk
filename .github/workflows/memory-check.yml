@@ -1,0 +1,65 @@
+name: memory-check
+
+on:
+  pull_request:
+    paths:
+      - "memory/**"
+      - "scripts/memory*.mjs"
+      - ".github/memory-review.md"
+      - ".github/workflows/memory-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Secrets scan
+        run: npm run check:secrets
+      - name: Memory note checks
+        env:
+          MEMORY_DENYLIST: ${{ secrets.MEMORY_DENYLIST }}
+        run: npm run check:memory
+      - name: Validator tests
+        run: npm run test:memory
+
+  llm-review:
+    needs: validate
+    # Secrets aren't available to fork PRs, so those get the deterministic gate and a maintainer review only.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Review questions
+        id: review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEMORY_REVIEW_MODEL: ${{ vars.MEMORY_REVIEW_MODEL }}
+          MEMORY_DENYLIST: ${{ secrets.MEMORY_DENYLIST }}
+        run: |
+          set +e
+          node scripts/memory-review.mjs "origin/${{ github.base_ref }}" memory-review-comment.md
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Post review comment
+        if: hashFiles('memory-review-comment.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file memory-review-comment.md
+      - name: Require a maintainer read on high findings
+        if: steps.review.outputs.status == '2'
+        run: |
+          echo "::error::The review flagged a high-severity audience, leakage, or influence problem. Fix it or have a maintainer dismiss it."
+          exit 1
