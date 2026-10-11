@@ -12,9 +12,12 @@
     "apps/ui"
   ],
   "scripts": {
-    "test": "npm run check:secrets && npm run test -w @iboss/sdk",
+    "test": "npm run check:secrets && npm run check:memory && npm run test:memory && npm run test -w @iboss/sdk",
     "typecheck": "npm run typecheck -w @iboss/sdk && npm run typecheck -w @iboss/ui",
     "check:secrets": "node scripts/check-secrets.mjs",
+    "check:memory": "node scripts/memory.mjs check",
+    "test:memory": "node --test scripts/memory.test.mjs",
+    "memory:index": "node scripts/memory.mjs index",
     "cli": "node packages/sdk/bin/iboss.mjs",
     "ui": "npm run dev -w @iboss/ui",
     "ui:start": "npm run start -w @iboss/ui"
